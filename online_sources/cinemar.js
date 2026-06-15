@@ -4,6 +4,9 @@
     var CINEMAR_RAILWAY = function() { return getCinemarProxyUrl(); };
     var TURBO_RAILWAY   = function() { return getProxyUrl(); };
 
+    var CINEMAR_CACHE = {};
+    var CINEMAR_CACHE_TTL = 30 * 60 * 1000;
+
     registerSource('cinemar', 'Cinemar', {
         load: function(card, callback, opts) {
             opts = opts || {};
@@ -29,15 +32,82 @@
                 Lampa.Storage.set(WATCHED_KEY, all);
             };
 
-            var playVoice = function(voice, seasonNum, episodeNum) {
+            var cacheKey = (function() {
+                var name = card.original_title || card.original_name || card.title || card.name || '';
+                var y = (card.release_date || card.first_air_date || '').slice(0, 4);
+                var serial = !!(card.number_of_seasons || card.media_type === 'tv' || card.first_air_date);
+                return String(card.id || '') + '|' + String(name || '') + '|' + String(y || '') + '|' + (serial ? 'tv' : 'movie');
+            })();
+
+            var cacheGet = function() {
+                var e = CINEMAR_CACHE[cacheKey];
+                if (!e) return null;
+                if ((Date.now() - (e.ts || 0)) > CINEMAR_CACHE_TTL) {
+                    delete CINEMAR_CACHE[cacheKey];
+                    return null;
+                }
+                return e;
+            };
+
+            var cacheSet = function(data, proxyBase, bestUrl) {
+                CINEMAR_CACHE[cacheKey] = { ts: Date.now(), data: data || null, proxyBase: proxyBase || '', bestUrl: bestUrl || '' };
+            };
+
+            var activeProxyBase = '';
+            try { activeProxyBase = String(getCinemarProxyUrl() || '').replace(/\/$/, ''); } catch (e) { activeProxyBase = ''; }
+
+            var proxyHls = function(url) {
+                if (!activeProxyBase) return url;
+                return activeProxyBase + '/hls?url=' + encodeURIComponent(url);
+            };
+
+            var parseHlsQualities = function(m3u8Text) {
+                var qualities = {};
+                var lines = String(m3u8Text || '').split('\n');
+                for (var i = 0; i < lines.length; i++) {
+                    var line = (lines[i] || '').trim();
+                    if (line.indexOf('#EXT-X-STREAM-INF') !== 0) continue;
+                    var nextLine = (lines[i + 1] || '').trim();
+                    if (!nextLine || nextLine.indexOf('#') === 0) continue;
+                    var rMatch = line.match(/RESOLUTION=(\d+)x(\d+)/i);
+                    var label = rMatch ? window.resolveQualityLabel(parseInt(rMatch[1], 10)) : '';
+                    if (!label) continue;
+                    if (!qualities[label]) qualities[label] = nextLine;
+                }
+                return qualities;
+            };
+
+            var playVoice = function(voice, seasonNum, episodeNum, playlist) {
                 if (!voice || !voice.url) { Lampa.Noty.show('Cinemar: нет потока'); return; }
                 var t = title;
                 if (seasonNum && episodeNum) t += ' S' + seasonNum + 'E' + episodeNum;
                 watchedSet({ source: 'cinemar', voice_name: voice.label, season: seasonNum || null, episode: episodeNum || null });
-                var playerItem = { title: t, url: voice.url };
+                var srcUrl = voice.url;
+                var proxied = proxyHls(srcUrl);
+                var playerItem = { title: t, url: proxied || srcUrl };
                 if (voice.subtitles && voice.subtitles.length) playerItem.subtitles = voice.subtitles;
-                Lampa.Player.play(playerItem);
-                Lampa.Player.playlist([playerItem]);
+                var listToSet = (playlist && playlist.length) ? playlist : [playerItem];
+
+                var xhrQ = new XMLHttpRequest();
+                xhrQ.open('GET', playerItem.url, true);
+                xhrQ.timeout = 9000;
+                xhrQ.onload = function() {
+                    var text = xhrQ.responseText || '';
+                    if (String(text).trim().indexOf('#EXTM3U') !== 0) {
+                        Lampa.Player.play(playerItem);
+                        Lampa.Player.playlist(listToSet);
+                        return;
+                    }
+                    var quals = parseHlsQualities(text);
+                    if (quals && Object.keys(quals).length > 1) playerItem.quality = quals;
+                    Lampa.Player.play(playerItem);
+                    Lampa.Player.playlist(listToSet);
+                };
+                xhrQ.onerror = xhrQ.ontimeout = function() {
+                    Lampa.Player.play(playerItem);
+                    Lampa.Player.playlist(listToSet);
+                };
+                xhrQ.send();
             };
 
             var buildMovieItems = function(data) {
@@ -68,7 +138,7 @@
                 var firstUrl = voiceList[0] && voiceList[0].url;
                 if (firstUrl) {
                     var xhrQ = new XMLHttpRequest();
-                    xhrQ.open('GET', firstUrl, true);
+                    xhrQ.open('GET', proxyHls(firstUrl) || firstUrl, true);
                     xhrQ.timeout = 8000;
                     xhrQ.onload = function() {
                         var maxQ = window.resolveQualityFromM3U8(xhrQ.responseText || '');
@@ -156,11 +226,22 @@
                                         return;
                                     }
                                     
-                                    var result = { url: epVoice.url };
-                                    if (epVoice.subtitles && epVoice.subtitles.length) {
-                                        result.subtitles = epVoice.subtitles;
-                                    }
-                                    callback(result);
+                                    var result = { url: proxyHls(epVoice.url) || epVoice.url };
+                                    if (epVoice.subtitles && epVoice.subtitles.length) result.subtitles = epVoice.subtitles;
+                                    var qUrl = result.url;
+                                    var xhrQ = new XMLHttpRequest();
+                                    xhrQ.open('GET', qUrl, true);
+                                    xhrQ.timeout = 8000;
+                                    xhrQ.onload = function() {
+                                        var text = xhrQ.responseText || '';
+                                        if (String(text).trim().indexOf('#EXTM3U') === 0) {
+                                            var quals = parseHlsQualities(text);
+                                            if (quals && Object.keys(quals).length > 1) result.quality = quals;
+                                        }
+                                        callback(result);
+                                    };
+                                    xhrQ.onerror = xhrQ.ontimeout = function() { callback(result); };
+                                    xhrQ.send();
                                 };
                                 
                                 // Создаем items для плейлиста
@@ -181,10 +262,7 @@
                                 );
                                 
                                 // Загружаем текущую серию
-                                var playerItem = { title: t, url: voice.url };
-                                if (voice.subtitles && voice.subtitles.length) playerItem.subtitles = voice.subtitles;
-                                Lampa.Player.play(playerItem);
-                                Lampa.Player.playlist(playlist.length > 0 ? playlist : [playerItem]);
+                                playVoice(voice, parseInt(String(sId).replace(/[^0-9]/g, ''), 10) || 1, epN, playlist);
                             };
                         })(ep.id, epVoices, seasonId, epNum, allEpisodes)
                     });
@@ -195,7 +273,7 @@
                 var firstVoice = (curVoice ? firstEpVoices.filter(function(v) { return v.label === curVoice; })[0] : null) || firstEpVoices[0];
                 if (firstVoice && firstVoice.url) {
                     var xhrQ = new XMLHttpRequest();
-                    xhrQ.open('GET', firstVoice.url, true);
+                    xhrQ.open('GET', proxyHls(firstVoice.url) || firstVoice.url, true);
                     xhrQ.timeout = 8000;
                     xhrQ.onload = function() {
                         var maxQ = window.resolveQualityFromM3U8(xhrQ.responseText || '');
@@ -225,10 +303,13 @@
             var queryOrig = card.original_title || card.original_name || '';
             var query = queryRu || queryOrig;
             if (year) query = query + ' ' + year;
-
-            var activeProxyBase = (function() {
-                try { return String(getCinemarProxyUrl() || '').replace(/\/$/, ''); } catch (e) { return ''; }
-            })();
+            
+            var cached = cacheGet();
+            if (cached && cached.data) {
+                if (cached.proxyBase) activeProxyBase = String(cached.proxyBase).replace(/\/$/, '');
+                var cachedItems = (cached.data.content_type === 'serial' && cached.data.serial) ? buildSerialItems(cached.data) : buildMovieItems(cached.data);
+                if (cachedItems && cachedItems.length) { callback(null, cachedItems); return; }
+            }
 
             var buildProxyCandidates = function() {
                 var list = [];
@@ -299,6 +380,7 @@
                         items = buildMovieItems(data);
                     }
                     if (!items || !items.length) { callback(new Error('Cinemar: нет результатов')); return; }
+                    cacheSet(data, activeProxyBase || getCinemarProxyUrl(), best && best.url ? best.url : '');
                     callback(null, items);
                 };
                 xhr2.onerror = xhr2.ontimeout = function() { callback(new Error('Cinemar: ошибка сети')); };
@@ -340,28 +422,6 @@
                         };
 
                         var best = results.slice().sort(function(a, b) { return score(b) - score(a); })[0];
-
-                        if (year && score(best) <= 20) {
-                            var queryNoYear = searchQuery.replace(/\s+\d{4}\s*$/, '').trim();
-                            if (queryNoYear === searchQuery) { doStream(best); return; }
-                            var searchUrl2 = getCinemarProxyUrl() + '/uakinogo/search?q=' + encodeURIComponent(queryNoYear);
-                            var xhr1b = new XMLHttpRequest();
-                            xhr1b.open('GET', searchUrl2, true);
-                            xhr1b.timeout = 10000;
-                            xhr1b.onload = function() {
-                                var resp2;
-                                try { resp2 = JSON.parse(xhr1b.responseText); } catch(e) { resp2 = null; }
-                                if (resp2 && resp2.ok && resp2.results && resp2.results.length) {
-                                    var best2 = resp2.results.slice().sort(function(a, b) { return score(b) - score(a); })[0];
-                                    if (score(best2) >= score(best)) best = best2;
-                                }
-                                doStream(best);
-                            };
-                            xhr1b.onerror = xhr1b.ontimeout = function() { doStream(best); };
-                            xhr1b.send();
-                            return;
-                        }
-
                         doStream(best);
                     };
 
