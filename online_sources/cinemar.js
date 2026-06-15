@@ -226,8 +226,64 @@
             var query = queryRu || queryOrig;
             if (year) query = query + ' ' + year;
 
+            var activeProxyBase = (function() {
+                try { return String(getCinemarProxyUrl() || '').replace(/\/$/, ''); } catch (e) { return ''; }
+            })();
+
+            var buildProxyCandidates = function() {
+                var list = [];
+                var add = function(u) {
+                    u = String(u || '').trim().replace(/\/$/, '');
+                    if (!u || u.indexOf('http') !== 0) return;
+                    if (list.indexOf(u) === -1) list.push(u);
+                };
+                add(activeProxyBase);
+                add('https://prox-kk62.onrender.com');
+                add('https://recycleactor-prox.hf.space');
+                return list;
+            };
+
+            var searchOnProxy = function(base, searchQuery, done) {
+                var searchUrl = base + '/uakinogo/search?q=' + encodeURIComponent(searchQuery);
+                var xhr = new XMLHttpRequest();
+                xhr.open('GET', searchUrl, true);
+                xhr.timeout = 15000;
+                xhr.onload = function() {
+                    var resp;
+                    try { resp = JSON.parse(xhr.responseText); } catch(e) { resp = null; }
+                    if (!resp || !resp.ok || !resp.results || !resp.results.length) {
+                        done(new Error('not_found'));
+                        return;
+                    }
+                    done(null, resp);
+                };
+                xhr.onerror = xhr.ontimeout = function() { done(new Error('network')); };
+                xhr.send();
+            };
+
+            var searchWithFallback = function(searchQuery, done) {
+                var candidates = buildProxyCandidates();
+                var idx = 0;
+                var tryNext = function() {
+                    if (idx >= candidates.length) {
+                        done(new Error('not_found'));
+                        return;
+                    }
+                    var base = candidates[idx++];
+                    searchOnProxy(base, searchQuery, function(err, resp) {
+                        if (!err && resp && resp.results && resp.results.length) {
+                            activeProxyBase = base;
+                            done(null, resp);
+                            return;
+                        }
+                        tryNext();
+                    });
+                };
+                tryNext();
+            };
+
             var doStream = function(best) {
-                var streamUrl = getCinemarProxyUrl() + '/uakinogo/stream?url=' + encodeURIComponent(best.url);
+                var streamUrl = (activeProxyBase || getCinemarProxyUrl()) + '/uakinogo/stream?url=' + encodeURIComponent(best.url);
                 var xhr2 = new XMLHttpRequest();
                 xhr2.open('GET', streamUrl, true);
                 xhr2.timeout = 60000;
@@ -250,56 +306,67 @@
             };
 
             var doCinemarSearch = function(searchQuery) {
-                var searchUrl = getCinemarProxyUrl() + '/uakinogo/search?q=' + encodeURIComponent(searchQuery);
-                var xhr = new XMLHttpRequest();
-                xhr.open('GET', searchUrl, true);
-                xhr.timeout = 15000;
-                xhr.onload = function() {
-                    var resp;
-                    try { resp = JSON.parse(xhr.responseText); } catch(e) { resp = null; }
-                    if (!resp || !resp.ok || !resp.results || !resp.results.length) {
+                searchWithFallback(searchQuery, function(err, resp) {
+                    if (err || !resp || !resp.results || !resp.results.length) {
+                        if (year) {
+                            var queryNoYear = searchQuery.replace(/\s+\d{4}\s*$/, '').trim();
+                            if (queryNoYear && queryNoYear !== searchQuery) {
+                                searchWithFallback(queryNoYear, function(err2, resp2) {
+                                    if (err2 || !resp2 || !resp2.results || !resp2.results.length) {
+                                        callback(new Error('Cinemar: не найдено "' + searchQuery + '"'));
+                                        return;
+                                    }
+                                    resp = resp2;
+                                    searchQuery = queryNoYear;
+                                    proceed();
+                                });
+                                return;
+                            }
+                        }
                         callback(new Error('Cinemar: не найдено "' + searchQuery + '"'));
                         return;
                     }
 
-                    var results = resp.results;
-                    var score = function(r) {
-                        var s = 0;
-                        var url = r.url || '';
-                        var slug = r.slug || '';
-                        if (isSerial && url.indexOf('serial') !== -1) s += 20;
-                        if (!isSerial && url.indexOf('serial') === -1) s += 20;
-                        if (year && slug.indexOf(year) !== -1) s += 15;
-                        return s;
+                    var proceed = function() {
+                        var results = resp.results;
+                        var score = function(r) {
+                            var s = 0;
+                            var url = r.url || '';
+                            var slug = r.slug || '';
+                            if (isSerial && url.indexOf('serial') !== -1) s += 20;
+                            if (!isSerial && url.indexOf('serial') === -1) s += 20;
+                            if (year && slug.indexOf(year) !== -1) s += 15;
+                            return s;
+                        };
+
+                        var best = results.slice().sort(function(a, b) { return score(b) - score(a); })[0];
+
+                        if (year && score(best) <= 20) {
+                            var queryNoYear = searchQuery.replace(/\s+\d{4}\s*$/, '').trim();
+                            if (queryNoYear === searchQuery) { doStream(best); return; }
+                            var searchUrl2 = getCinemarProxyUrl() + '/uakinogo/search?q=' + encodeURIComponent(queryNoYear);
+                            var xhr1b = new XMLHttpRequest();
+                            xhr1b.open('GET', searchUrl2, true);
+                            xhr1b.timeout = 10000;
+                            xhr1b.onload = function() {
+                                var resp2;
+                                try { resp2 = JSON.parse(xhr1b.responseText); } catch(e) { resp2 = null; }
+                                if (resp2 && resp2.ok && resp2.results && resp2.results.length) {
+                                    var best2 = resp2.results.slice().sort(function(a, b) { return score(b) - score(a); })[0];
+                                    if (score(best2) >= score(best)) best = best2;
+                                }
+                                doStream(best);
+                            };
+                            xhr1b.onerror = xhr1b.ontimeout = function() { doStream(best); };
+                            xhr1b.send();
+                            return;
+                        }
+
+                        doStream(best);
                     };
 
-                    var best = results.slice().sort(function(a, b) { return score(b) - score(a); })[0];
-
-                    if (year && score(best) <= 20) {
-                        var queryNoYear = searchQuery.replace(/\s+\d{4}\s*$/, '').trim();
-                        if (queryNoYear === searchQuery) { doStream(best); return; }
-                        var searchUrl2 = getCinemarProxyUrl() + '/uakinogo/search?q=' + encodeURIComponent(queryNoYear);
-                        var xhr1b = new XMLHttpRequest();
-                        xhr1b.open('GET', searchUrl2, true);
-                        xhr1b.timeout = 10000;
-                        xhr1b.onload = function() {
-                            var resp2;
-                            try { resp2 = JSON.parse(xhr1b.responseText); } catch(e) { resp2 = null; }
-                            if (resp2 && resp2.ok && resp2.results && resp2.results.length) {
-                                var best2 = resp2.results.slice().sort(function(a, b) { return score(b) - score(a); })[0];
-                                if (score(best2) >= score(best)) best = best2;
-                            }
-                            doStream(best);
-                        };
-                        xhr1b.onerror = xhr1b.ontimeout = function() { doStream(best); };
-                        xhr1b.send();
-                        return;
-                    }
-
-                    doStream(best);
-                };
-                xhr.onerror = xhr.ontimeout = function() { callback(new Error('Cinemar: ошибка сети')); };
-                xhr.send();
+                    proceed();
+                });
             };
 
             doCinemarSearch(query);
