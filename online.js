@@ -4679,7 +4679,7 @@ if (typeof Promise === 'undefined') {
                     PROXY_SERVERS.forEach(function(p) { v[p.id] = p.name; });
                     return v;
                 })(),
-                default: 'railway'
+                default: 'hf'
             },
             field: { name: 'Активный прокси' }
         });
@@ -4820,6 +4820,12 @@ if (typeof Promise === 'undefined') {
 
     function init() {
         refreshCdnvideohubProxyFromStorage();
+        try {
+            if (window.Lampa && Lampa.Storage) {
+                var curProxy = Lampa.Storage.get(PROXY_STORAGE_KEY, '');
+                if (!curProxy) Lampa.Storage.set(PROXY_STORAGE_KEY, 'hf');
+            }
+        } catch (e) {}
 
         ensureOnlineSourcesLoaded(function(err) {
             if (err) {
