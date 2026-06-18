@@ -268,6 +268,81 @@
             }
         })();
 
+        // --- SEARCH SOURCES DEDUPER ---
+        (function() {
+            var norm = function(v) {
+                return (v || '').toString().replace(/\s+/g, ' ').trim().toLowerCase();
+            };
+
+            var apply = function() {
+                try {
+                    if (window.Lampa && Lampa.Api && typeof Lampa.Api.availableDiscovery === 'function' && !Lampa.Api.availableDiscovery._lampac_dedupe) {
+                        var origAvail = Lampa.Api.availableDiscovery;
+                        Lampa.Api.availableDiscovery = function() {
+                            var res = origAvail.apply(this, arguments) || [];
+                            try {
+                                var seen = {};
+                                var out = [];
+                                for (var i = 0; i < res.length; i++) {
+                                    var s = res[i];
+                                    var key = norm(s && (s.title || s.name || s.id || ''));
+                                    if (!key) {
+                                        out.push(s);
+                                        continue;
+                                    }
+                                    if (seen[key]) continue;
+                                    seen[key] = 1;
+                                    out.push(s);
+                                }
+                                return out;
+                            } catch (e) {
+                                return res;
+                            }
+                        };
+                        Lampa.Api.availableDiscovery._lampac_dedupe = true;
+                    }
+                } catch (e) {}
+
+                try {
+                    if (window.Lampa && Lampa.Search && typeof Lampa.Search.addSource === 'function' && !Lampa.Search.addSource._lampac_dedupe) {
+                        var origAddSource = Lampa.Search.addSource;
+                        window._lampac_search_sources_seen = window._lampac_search_sources_seen || {};
+                        Lampa.Search.addSource = function(source) {
+                            try {
+                                var key = norm(source && (source.title || source.name || source.id || ''));
+                                if (key) {
+                                    if (window._lampac_search_sources_seen[key]) return;
+                                    window._lampac_search_sources_seen[key] = 1;
+                                }
+                            } catch (e) {}
+                            return origAddSource.apply(this, arguments);
+                        };
+                        Lampa.Search.addSource._lampac_dedupe = true;
+                    }
+                } catch (e2) {}
+
+                var okApi = !!(window.Lampa && Lampa.Api && Lampa.Api.availableDiscovery && Lampa.Api.availableDiscovery._lampac_dedupe);
+                var okSearch = !!(window.Lampa && Lampa.Search && Lampa.Search.addSource && Lampa.Search.addSource._lampac_dedupe);
+                return okApi && okSearch;
+            };
+
+            var tries = 0;
+            var tick = function() {
+                tries++;
+                if (apply()) return;
+                if (tries < 50) setTimeout(tick, 200);
+            };
+            tick();
+
+            try {
+                if (window.Lampa && Lampa.Listener) {
+                    Lampa.Listener.follow('activity', function(e) {
+                        if (e.type === 'ready') tick();
+                    });
+                }
+            } catch (e3) {}
+        })();
+
         // --- LAMPAC AUTH SPOOFER ---
         (function() {
             var applyLampacAuthPatch = function() {
@@ -635,13 +710,10 @@
                 '    position: fixed !important;',
                 '    z-index: 10 !important;',
                 '    pointer-events: none !important;',
-                '    transform: translate3d(0,0,0) !important;',
-                '    transition: transform 0.3s cubic-bezier(0.25, 0.46, 0.45, 0.94), opacity 0.2s ease !important;',
+                '    transform: translate3d(0,0,0);',
+                '    transition: opacity 0.2s ease !important;',
+                '    will-change: transform !important;',
                 '    display: none;',
-                ' }',
-                ' ',
-                ' body.with--menu #lampac-ui-fixed-sidebar {',
-                '    transform: translate3d(17.2rem, 0, 0) !important;',
                 ' }',
                 ' ',
                 ' /* Скрываем наши элементы когда открыт поиск или настройки */',
@@ -886,6 +958,9 @@
                 ' .lampac-continue__btn.clicking {',
                 '    transform: scale(0.96); transition: all 0.1s ease;',
                 ' }',
+                ' .lampac-continue__btn > span { display: inline-flex; align-items: center; justify-content: center; }',
+                ' .lampac-continue__ico { width: 1.15em; height: 1.15em; display: inline-flex; align-items: center; justify-content: center; margin-right: 0.6em; flex: 0 0 auto; }',
+                ' .lampac-continue__ico svg { width: 100%; height: 100%; display: block; }',
                 ' .lampac-continue__timeline { margin-bottom: 1em; }',
                 ' .lampac-continue__timeline .timeline { height: 0.4em !important; background: rgba(255,255,255,0.1) !important; }',
                 ' .lampac-continue__timeline .timeline__line { background: #fff !important; }',
@@ -898,6 +973,20 @@
 
         // --- 0. UTILS ---
         var Backdrop = {
+            _shiftX: 0,
+            _sideOffsetHidden: -50,
+            _applyShift: function() {
+                try {
+                    var sideBg = document.getElementById('lampac-side-backdrop');
+                    if (!sideBg) return;
+                    var local = sideBg.classList.contains('visible') ? 0 : this._sideOffsetHidden;
+                    var x = (this._shiftX || 0) + local;
+                    if (sideBg._lampac_last_shift_x !== x) {
+                        sideBg.style.transform = 'translate3d(' + x + 'px,0,0)';
+                        sideBg._lampac_last_shift_x = x;
+                    }
+                } catch (e) {}
+            },
             ensure: function() {
                 var sideBg = document.getElementById('lampac-side-backdrop');
                 if (!sideBg) {
@@ -921,6 +1010,7 @@
                 sideBg.style.display = 'block';
                 sideBg.style.visibility = 'visible';
                 sideBg.classList.remove('visible');
+                this._applyShift();
                 try { void sideBg.offsetHeight; } catch (e) {}
                 setTimeout(function() {
                     try {
@@ -942,6 +1032,7 @@
                 var sideBg = document.getElementById('lampac-side-backdrop');
                 if (sideBg) {
                     sideBg.classList.remove('visible');
+                    this._applyShift();
                     if (immediate) {
                         sideBg.style.visibility = 'hidden';
                         return;
@@ -950,7 +1041,7 @@
                         if (!sideBg.classList.contains('visible')) {
                             sideBg.style.visibility = 'hidden';
                         }
-                    }, 1500);
+                    }, 220);
                 }
             }
         };
@@ -972,6 +1063,32 @@
             } catch (e) {}
             try { window._lampacCurrentLogo = null; } catch (e) {}
             try { window._lampacCurrentLogoEl = null; } catch (e) {}
+        };
+
+        var _lampacGetWrapShiftX = function(syncState) {
+            try {
+                var el = syncState ? syncState._lampac_wrap_content : null;
+                if (!el || !document.body.contains(el)) {
+                    el = document.querySelector('.wrap__content');
+                    if (syncState) syncState._lampac_wrap_content = el || null;
+                }
+                if (!el) return 0;
+                var st = window.getComputedStyle ? window.getComputedStyle(el) : null;
+                var tr = '';
+                if (st) tr = st.transform || st.webkitTransform || st.mozTransform || st.msTransform || st.oTransform || '';
+                if (!tr || tr === 'none') return 0;
+                var m3 = tr.match(/matrix3d\(([^)]+)\)/);
+                if (m3 && m3[1]) {
+                    var p3 = m3[1].split(',');
+                    if (p3.length >= 16) return parseFloat(p3[12]) || 0;
+                }
+                var m = tr.match(/matrix\(([^)]+)\)/);
+                if (m && m[1]) {
+                    var p = m[1].split(',');
+                    if (p.length >= 6) return parseFloat(p[4]) || 0;
+                }
+            } catch (e) {}
+            return 0;
         };
 
         var _lampacBindLeftToSidebar = function() {
@@ -1109,14 +1226,56 @@
         var normalizeUrlForComponentId = function(url) {
             var u = (url + '').trim();
             if (!u) return '';
+            var dropKeys = {
+                reset: 1, _: 1, t: 1, ts: 1, time: 1, r: 1, rnd: 1, rand: 1, random: 1,
+                nocache: 1, cache: 1, cb: 1, v: 1, ver: 1, version: 1, upd: 1, update: 1
+            };
             try {
                 var parsed = new URL(u, window.location && window.location.href ? window.location.href : undefined);
                 parsed.hash = '';
-                try { parsed.searchParams.delete('reset'); } catch (e) {}
-                try { parsed.searchParams.delete('_'); } catch (e) {}
+                if (parsed.searchParams && typeof parsed.searchParams.forEach === 'function') {
+                    try {
+                        var pairs = [];
+                        parsed.searchParams.forEach(function(v, k) {
+                            pairs.push([String(k), String(v)]);
+                        });
+                        pairs = pairs.filter(function(p) {
+                            var k = (p[0] || '').toLowerCase();
+                            if (dropKeys[k]) return false;
+                            if (k.indexOf('utm_') === 0) return false;
+                            return true;
+                        });
+                        pairs.sort(function(a, b) {
+                            var ak = a[0], bk = b[0];
+                            if (ak === bk) {
+                                var av = a[1], bv = b[1];
+                                return av < bv ? -1 : (av > bv ? 1 : 0);
+                            }
+                            return ak < bk ? -1 : 1;
+                        });
+                        var qs = '';
+                        for (var i = 0; i < pairs.length; i++) {
+                            if (qs) qs += '&';
+                            qs += encodeURIComponent(pairs[i][0]) + '=' + encodeURIComponent(pairs[i][1]);
+                        }
+                        parsed.search = qs ? ('?' + qs) : '';
+                    } catch (e) {}
+                } else {
+                    throw new Error('no_search_params');
+                }
                 return parsed.toString();
             } catch (e) {
-                u = u.replace(/([?&])reset=[^&#]*(&)?/i, function(m, sep, amp) {
+                var keys = Object.keys(dropKeys);
+                for (var ki = 0; ki < keys.length; ki++) {
+                    var key = keys[ki];
+                    var re = new RegExp('([?&])' + key.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '=[^&#]*(&)?', 'ig');
+                    u = u.replace(re, function(m, sep, amp) {
+                        if (sep === '?' && amp) return '?';
+                        if (sep === '&' && amp) return '&';
+                        return '';
+                    });
+                }
+                u = u.replace(/([?&])utm_[^=]+=[^&#]*(&)?/ig, function(m, sep, amp) {
                     if (sep === '?' && amp) return '?';
                     if (sep === '&' && amp) return '&';
                     return '';
@@ -1150,7 +1309,7 @@
 
             Lampa.Component.add = function(name, comp) {
                 var url = window._lampac_loading_url || window._currentLoadingPluginUrl;
-                if (!url && document.currentScript) url = document.currentScript.getAttribute('data-lampac-url');
+                if (!url && document.currentScript) url = document.currentScript.getAttribute('data-lampac-url') || document.currentScript.src || document.currentScript.getAttribute('src');
                 
                 var actualName = name;
                 
@@ -1159,7 +1318,8 @@
                     if (CORE_COMPONENTS.indexOf(name) === -1) {
                         window._lampac_name_mapping[name] = id;
                         actualName = id;
-                        window._lampac_registered_ids[url] = id; // Store the last ID for this URL
+                        var normalizedKey = normalizeUrlForComponentId(url) || (url + '');
+                        window._lampac_registered_ids[normalizedKey] = id; // Store the last ID for this URL
                         console.log('[LampacUI] Omnivorous Hijack (Load):', name, '->', actualName, 'from', url);
                     }
                 } else if (window._lampac_name_mapping[name]) {
@@ -1191,6 +1351,27 @@
                         params.component = window._lampac_name_mapping[target];
                     } 
                 }
+                try {
+                    var compNeed = params && params.component ? String(params.component) : '';
+                    if (compNeed && compNeed.indexOf('plugin_') === 0 && !Lampa.Component.get(compNeed)) {
+                        var urlNeed = params && params.url ? String(params.url) : '';
+                        if (urlNeed) {
+                            var self = this;
+                            var srcObj = { url: urlNeed, name: '' };
+                            var tryLoad = function() {
+                                if (typeof Sources !== 'undefined' && Sources && Sources.loadOnly) {
+                                    Sources.loadOnly(srcObj, function() {
+                                        originalActivityPush.call(self, params);
+                                    }, true);
+                                } else {
+                                    setTimeout(tryLoad, 50);
+                                }
+                            };
+                            tryLoad();
+                            return;
+                        }
+                    }
+                } catch (e2) {}
                 return originalActivityPush.call(this, params);
             };
             Lampa.Activity.push._lampac_patched = true;
@@ -1674,10 +1855,10 @@
                                 '</div>',
                                 '<div class="lampac-continue__footer">',
                                     '<div class="lampac-continue__btn lampac-continue__btn--play selector focus">',
-                                        '<span>▶&nbsp; Продолжить</span>',
+                                        '<span><span class="lampac-continue__ico"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="5 3 19 12 5 21 5 3" fill="currentColor" stroke="none"/></svg></span>Продолжить</span>',
                                     '</div>',
                                     '<div class="lampac-continue__btn lampac-continue__btn--choose selector">',
-                                        '<span>☰&nbsp; ' + (isSerial ? 'Выбрать серию' : 'Начать сначала') + '</span>',
+                                        '<span><span class="lampac-continue__ico"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 6h16"/><path d="M4 12h16"/><path d="M4 18h16"/></svg></span>' + (isSerial ? 'Выбрать серию' : 'Начать сначала') + '</span>',
                                     '</div>',
                                 '</div>',
                             '</div>',
@@ -1764,9 +1945,21 @@
                     show(movie.backdrop_path ? Lampa.TMDB.image('t/p/w780' + movie.backdrop_path) : '', movie.title || movie.name || '');
                 }
             },
-            loadAndOpen: function(source, movie) {
+            loadOnly: function(source, callback, silent) {
                 var id = urlToComponentName(source.url);
-                Lampa.Noty.show('Загрузка: ' + this.displayName(source));
+                var normalizedKey = normalizeUrlForComponentId(source.url) || (source.url + '');
+                var remembered = window._lampac_registered_ids[normalizedKey];
+                if (remembered && Lampa.Component.get(remembered)) {
+                    if (callback) callback(remembered);
+                    return;
+                }
+                if (Lampa.Component.get(id)) {
+                    window._lampac_registered_ids[normalizedKey] = id;
+                    if (callback) callback(id);
+                    return;
+                }
+
+                if (!silent) Lampa.Noty.show('Загрузка: ' + this.displayName(source));
                 var scriptUrl = source.url;
                 if (scriptUrl.indexOf('reset=') === -1) scriptUrl += (scriptUrl.indexOf('?') === -1 ? '?' : '&') + 'reset=' + Math.random();
 
@@ -1828,6 +2021,10 @@
                         var script = document.createElement('script');
                         script.id = 'lampac-' + id;
                         script.setAttribute('data-lampac-url', source.url);
+                        try {
+                            var existing = document.getElementById(script.id);
+                            if (existing && existing.parentNode) existing.parentNode.removeChild(existing);
+                        } catch (e) {}
 
                         var _origListenerFollow = null;
                         if (window.appready && Lampa.Listener && Lampa.Listener.follow && !Lampa.Listener._lampac_inject_hijack) {
@@ -1858,18 +2055,20 @@
                         var attempts = 0;
                         var check = setInterval(function() {
                             attempts++;
-                            var foundId = window._lampac_registered_ids[source.url];
+                            var foundId = window._lampac_registered_ids[normalizedKey] || id;
                             if (foundId && Lampa.Component.get(foundId)) {
                                 clearInterval(check);
-                                Sources.push(foundId, source, movie);
+                                if (callback) callback(foundId);
                             } else if (attempts > 80) {
                                 clearInterval(check);
-                                Lampa.Noty.show('Ошибка регистрации (N)');
+                                if (!silent) Lampa.Noty.show('Ошибка регистрации (N)');
+                                if (callback) callback(null);
                             }
                         }, 100);
                     } catch(e) {
                         window._lampac_loading_url = null;
-                        Lampa.Noty.show('Ошибка запуска: ' + e.message);
+                        if (!silent) Lampa.Noty.show('Ошибка запуска: ' + e.message);
+                        if (callback) callback(null);
                     }
                 }, function() {
                     window.lampac_plugin = false;
@@ -1880,19 +2079,26 @@
                         var attempts = 0;
                         var check = setInterval(function() {
                             attempts++;
-                            var foundId = window._lampac_registered_ids[source.url];
+                            var foundId = window._lampac_registered_ids[normalizedKey] || id;
                             if (foundId && Lampa.Component.get(foundId)) {
                                 clearInterval(check);
                                 window._lampac_loading_url = null;
-                                Sources.push(foundId, source, movie);
+                                if (callback) callback(foundId);
                             } else if (attempts > 80) {
                                 clearInterval(check);
                                 window._lampac_loading_url = null;
-                                Lampa.Noty.show('Ошибка регистрации (S)');
+                                if (!silent) Lampa.Noty.show('Ошибка регистрации (S)');
+                                if (callback) callback(null);
                             }
                         }, 100);
                     }, null, false, true);
                 }, false, { dataType: 'text' });
+            },
+            loadAndOpen: function(source, movie) {
+                var _this = this;
+                this.loadOnly(source, function(foundId) {
+                    if (foundId) _this.push(foundId, source, movie);
+                }, false);
             },
             push: function(id, source, movie) {
                 if (movie && movie.id) {
@@ -2889,7 +3095,11 @@
                                             return;
                                         }
 
-                                        var anchor = document.querySelector('.online__info-left, .info__left, .full-descr__left, .explorer__left, .explorer-card__descr, .online__descr, .online-descr');
+                                        var anchor = syncState._lampac_anchor;
+                                        if (!anchor || !document.body.contains(anchor)) {
+                                            anchor = document.querySelector('.online__info-left, .info__left, .full-descr__left, .explorer__left, .explorer-card__descr, .online__descr, .online-descr');
+                                            syncState._lampac_anchor = anchor || null;
+                                        }
                                         
                                         if (cur.parentNode !== document.body) {
                                             document.body.appendChild(cur);
@@ -2898,9 +3108,11 @@
                                         if (anchor && anchor.getBoundingClientRect) {
                                             var r = anchor.getBoundingClientRect();
                                             var top = Math.round(r.top);
-                                            var left = Math.round(r.left);
-                                            
-                                            var btns = document.querySelector('.full-start-new__buttons, .full-start__buttons, .info__buttons, .online__buttons, .movie-full__buttons, .full-descr__buttons, .full-start-new__actions, .full-start__actions');
+                                            var btns = syncState._lampac_btns;
+                                            if (!btns || !document.body.contains(btns)) {
+                                                btns = document.querySelector('.full-start-new__buttons, .full-start__buttons, .info__buttons, .online__buttons, .movie-full__buttons, .full-descr__buttons, .full-start-new__actions, .full-start__actions');
+                                                syncState._lampac_btns = btns || null;
+                                            }
                                             if (btns && btns.getBoundingClientRect) {
                                                 var br = btns.getBoundingClientRect();
                                                 if (br && br.top > 0 && br.top < window.innerHeight) {
@@ -2911,12 +3123,33 @@
                                             if (top > window.innerHeight * 0.1) top = Math.round(window.innerHeight * 0.1);
                                             if (top < 5) top = 5;
 
+                                            var shiftX = _lampacGetWrapShiftX(syncState);
+                                            var baseLeft = r.left - shiftX;
+                                            if (baseLeft < 0) baseLeft = 0;
+
                                             cur.style.display = 'block';
                                             cur.style.top = top + 'px';
-                                            cur.style.left = left + 'px';
+                                            if (cur._lampac_last_base_left !== baseLeft) {
+                                                cur.style.left = baseLeft + 'px';
+                                                cur._lampac_last_base_left = baseLeft;
+                                            }
+                                            if (cur._lampac_last_shift_x !== shiftX) {
+                                                cur.style.transform = 'translate3d(' + shiftX + 'px,0,0)';
+                                                cur._lampac_last_shift_x = shiftX;
+                                            }
                                             cur.style.width = Math.max(200, Math.round(r.width)) + 'px';
                                             cur.style.height = 'calc(100vh - ' + top + 'px)';
+
+                                            try {
+                                                Backdrop._shiftX = shiftX;
+                                                Backdrop._applyShift();
+                                            } catch (e2) {}
                                         } else {
+                                            try {
+                                                var shiftX2 = _lampacGetWrapShiftX(syncState);
+                                                Backdrop._shiftX = shiftX2;
+                                                Backdrop._applyShift();
+                                            } catch (e3) {}
                                             cur.style.display = 'none';
                                         }
                                     } catch (e) {}
@@ -2945,7 +3178,9 @@
                                 if (anchorEl && anchorEl.getBoundingClientRect) {
                                     var r = anchorEl.getBoundingClientRect();
                                     var top = Math.max(0, Math.round(r.top));
-                                    var left = Math.max(0, Math.round(r.left));
+                                    var shiftX = _lampacGetWrapShiftX(window._lampacUiFixedSidebarSync);
+                                    var baseLeft = r.left - shiftX;
+                                    if (baseLeft < 0) baseLeft = 0;
                                     
                                     var btns = document.querySelector('.full-start-new__buttons, .full-start__buttons, .info__buttons, .online__buttons, .movie-full__buttons, .full-descr__buttons, .full-start-new__actions, .full-start__actions');
                                     if (btns && btns.getBoundingClientRect) {
@@ -2959,7 +3194,8 @@
                                     if (top < 5) top = 5;
                                     sb.style.position = 'fixed';
                                     sb.style.top = top + 'px';
-                                    sb.style.left = left + 'px';
+                                    sb.style.left = baseLeft + 'px';
+                                    sb.style.transform = 'translate3d(' + shiftX + 'px,0,0)';
                                     sb.style.width = Math.max(0, Math.round(r.width)) + 'px';
                                     sb.style.height = 'calc(100vh - ' + top + 'px)';
                                 }
@@ -3227,6 +3463,28 @@
             });
         }
 
+        var lampacDedupeSearchTabs = function() {
+            try {
+                var root = document.querySelector('.search');
+                if (!root) return;
+                var tabs = root.querySelectorAll('.search-source');
+                if (!tabs || !tabs.length) return;
+                var seen = {};
+                for (var i = 0; i < tabs.length; i++) {
+                    var el = tabs[i];
+                    var tEl = el.querySelector('.search-source__tab');
+                    var t = (tEl ? tEl.textContent : el.textContent) || '';
+                    var key = t.replace(/\s+/g, ' ').trim().toLowerCase();
+                    if (!key) continue;
+                    if (seen[key]) {
+                        try { if (el && el.parentNode) el.parentNode.removeChild(el); } catch (e1) {}
+                    } else {
+                        seen[key] = 1;
+                    }
+                }
+            } catch (e) {}
+        };
+
         var fixDOM = function() {
             var active = Lampa.Activity.active();
             var activeComp = active ? active.component : '';
@@ -3239,6 +3497,7 @@
 
             if (isSearchActive || isSettingsActive) {
                 if (sb) sb.style.display = 'none';
+                if (isSearchActive) lampacDedupeSearchTabs();
                 Backdrop.hide(true);
                 return;
             }
