@@ -12,6 +12,36 @@
       this.item = Lampa.Template.js('cub_collection');
       this.img = this.item.find('.card__img');
       this.icon = this.item.find('.cub-collection-card__user-icon img');
+
+      if (data && data.__create_collection) {
+        this.item.classList.add('cub-collection-card--create');
+
+        var view = this.item.find('.card__view');
+        if (view) {
+          view.innerHTML = '<div class="cub-collection-create__center"><svg width="48" height="48" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M12 5v14M5 12h14" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg></div>';
+        }
+
+        var head = this.item.find('.cub-collection-card__head');
+        if (head) head.remove();
+
+        var bottom = this.item.find('.cub-collection-card__bottom');
+        if (bottom) bottom.remove();
+
+        var title = this.item.find('.card__title');
+        if (title) title.textContent = 'Создать коллекцию';
+
+        return;
+      }
+
+      var bottom_wrap = this.item.find('.cub-collection-card__bottom');
+      var liked_wrap = this.item.find('.cub-collection-card__liked');
+      var user_wrap = this.item.find('.cub-collection-card__user');
+
+      if (bottom_wrap && liked_wrap && user_wrap) {
+        liked_wrap.before(user_wrap);
+        user_wrap.style.marginLeft = 'auto';
+      }
+
       this.item.find('.card__title').text(Lampa.Utils.capitalizeFirstLetter(data.title));
       this.item.find('.cub-collection-card__items').text(data.items_count);
       this.item.find('.cub-collection-card__date').text(Lampa.Utils.parseTime(data.time).full);
@@ -53,6 +83,19 @@
       var _this2 = this;
 
       this.build();
+
+      if (data && data.__create_collection) {
+        this.item.addEventListener('hover:enter', function () {
+          openCreateDialog(function () {
+            try {
+              Lampa.Activity.replace(Lampa.Activity.active());
+            }
+            catch (e) {}
+          });
+        });
+        return;
+      }
+
       this.item.addEventListener('hover:focus', function () {
         if (_this2.onFocus) _this2.onFocus(_this2.item, data);
       });
@@ -292,6 +335,10 @@
       if (item.hpu == 'user') url = api_url + 'list?cid=' + user.id;
       if (item.hpu == 'saved') url = api_url + 'saved-list';
       network.silent(url, function (data) {
+        if (item.hpu == 'user' && user.token) {
+          data.results = data.results || [];
+          data.results.unshift({ __create_collection: true });
+        }
         data.collection = true;
         data.line_type = 'collection';
         data.category = item.hpu;
@@ -601,18 +648,18 @@
         create: true
       });
       Lampa.Select.show({
-        title: 'Добавить в коллекцию',
+        title: 'В коллекцию',
         items: items,
         onSelect: function onSelect(item) {
           Lampa.Controller.toggle('content');
           if (item.create) {
             openCreateDialog(function (new_col) {
               if (new_col && new_col.id) {
-                addCardToCollectionInternal(new_col.id, card_data);
+                openCollectionActionDialog(new_col, card_data);
               }
             });
           } else if (item.collection) {
-            addCardToCollectionInternal(item.collection.id, card_data);
+            openCollectionActionDialog(item.collection, card_data);
           }
         },
         onBack: function onBack() {
@@ -622,6 +669,29 @@
     }, function () {
       Lampa.Loading.stop();
       Lampa.Noty.show('Не удалось загрузить коллекции');
+    });
+  }
+
+  function openCollectionActionDialog(collection, card_data) {
+    if (!collection || !collection.id) return;
+
+    Lampa.Select.show({
+      title: collection.title || 'Коллекция',
+      items: [{
+        title: 'Добавить',
+        action: 'add'
+      }, {
+        title: 'Удалить',
+        action: 'remove'
+      }],
+      onSelect: function onSelect(item) {
+        Lampa.Controller.toggle('content');
+        if (item.action == 'add') addCardToCollectionInternal(collection.id, card_data);
+        if (item.action == 'remove') removeCardFromCollectionInternal(collection.id, card_data);
+      },
+      onBack: function onBack() {
+        Lampa.Controller.toggle('content');
+      }
     });
   }
 
@@ -646,7 +716,7 @@
     });
   }
 
-  function removeCardFromCollectionInternal(collection_id, card_data) {
+  function removeCardFromCollectionInternal(collection_id, card_data, onDone) {
     Lampa.Loading.start(function () {
       Api.clear();
       Lampa.Loading.stop();
@@ -660,6 +730,7 @@
       Lampa.Bell.push({
         text: 'Удалено из коллекции'
       });
+      if (onDone) onDone();
     }, function (err) {
       Lampa.Loading.stop();
       Lampa.Noty.show('Не удалось удалить из коллекции');
@@ -724,7 +795,13 @@
           menu_items.unshift({
             title: 'Удалить из коллекции',
             onSelect: function () {
-              removeCardFromCollectionInternal(current_collection_id, element);
+              removeCardFromCollectionInternal(current_collection_id, element, function () {
+                try {
+                  var node = card.render(true);
+                  if (node) node.remove();
+                }
+                catch (e) {}
+              });
             }
           });
           menu_items.unshift({
@@ -814,14 +891,19 @@
       version: '1.1.2',
       name: 'Коллекции',
       description: '',
-      component: 'cub_collections'
+      component: 'cub_collections',
+      onContextMenu: true,
+      onContextLauch: function (card_data) {
+        openAddToCollectionDialog(card_data);
+      }
     };
     Lampa.Manifest.plugins = manifest;
     Lampa.Component.add('cub_collections_main', component$2);
     Lampa.Component.add('cub_collections_collection', component);
     Lampa.Component.add('cub_collections_view', component$1);
     Lampa.Template.add('cub_collection', '<div class="card cub-collection-card selector layer--visible layer--render card--collection"><div class="card__view"><img src="./img/img_load.svg" class="card__img"><div class="cub-collection-card__head"><div class="cub-collection-card__items"></div><div class="cub-collection-card__date"></div></div><div class="cub-collection-card__bottom"><div class="cub-collection-card__views"></div><div class="cub-collection-card__user"><div class="cub-collection-card__user-icon"><img src="./img/img_load.svg"></div><div class="cub-collection-card__user-name"></div></div><div class="cub-collection-card__liked"><div class="full-review__like-icon"><svg width="29" height="27" viewBox="0 0 29 27" fill="none" xmlns="http://www.w3.org/2000/svg"><path fill-rule="evenodd" clip-rule="evenodd" d="M8.0131 9.05733H3.75799C2.76183 9.05903 1.80696 9.45551 1.10257 10.1599C0.39818 10.8643 0.00170332 11.8192 0 12.8153V23.0778C0.00170332 24.074 0.39818 25.0289 1.10257 25.7333C1.80696 26.4377 2.76183 26.8341 3.75799 26.8358H23.394C24.2758 26.8354 25.1294 26.5252 25.8056 25.9594C26.4819 25.3936 26.9379 24.6082 27.094 23.7403L28.9408 13.4821C29.038 12.9408 29.0153 12.3849 28.8743 11.8534C28.7333 11.3218 28.4774 10.8277 28.1247 10.4058C27.7721 9.98391 27.3311 9.6445 26.833 9.41151C26.3349 9.17852 25.7918 9.05762 25.2419 9.05733H18.5043V3.63509C18.5044 2.90115 18.2824 2.18438 17.8673 1.57908C17.4522 0.973783 16.8636 0.508329 16.179 0.243966C15.4943 -0.0203976 14.7456 -0.0712821 14.0315 0.0980078C13.3173 0.267298 12.6712 0.648829 12.178 1.1924L12.1737 1.19669C10.5632 2.98979 9.70849 5.78681 8.79584 7.79142C8.6423 8.14964 8.45537 8.49259 8.23751 8.81574C8.16898 8.90222 8.09358 8.98301 8.01203 9.05733H8.0131ZM6.54963 23.6147H3.75799C3.68706 23.6147 3.61686 23.6005 3.55156 23.5728C3.48626 23.5452 3.42719 23.5046 3.37789 23.4536C3.32786 23.4047 3.28819 23.3463 3.26126 23.2817C3.23433 23.217 3.22045 23.1468 3.22045 23.0778V12.8153C3.22045 12.6768 3.24805 12.5396 3.30209 12.4124C3.35613 12.2852 3.43564 12.1705 3.53638 12.0746C3.63712 11.9787 3.75732 11.9035 3.89118 11.8536C4.02504 11.8038 4.17052 11.7807 4.31673 11.7859H6.54963V23.6147ZM24.9551 23.0778C24.9551 23.2163 24.9275 23.3535 24.8735 23.4807C24.8194 23.6079 24.7399 23.7226 24.6392 23.8185C24.5384 23.9144 24.4182 23.9896 24.2844 24.0394C24.1505 24.0893 24.005 24.1124 23.8588 24.1072H9.87479V12.8153H18.5043V18.0188C18.5043 18.1573 18.4767 18.2945 18.4227 18.4217C18.3686 18.5489 18.2891 18.6636 18.1884 18.7595C18.0876 18.8554 17.9674 18.9306 17.8336 18.9805C17.6997 19.0303 17.5542 19.0534 17.408 19.0482V22.7064C17.408 22.7773 17.3938 22.8475 17.3662 22.9128C17.3386 22.9781 17.298 23.0372 17.247 23.0865C17.196 23.1358 17.1376 23.1755 17.0729 23.2024C17.0082 23.2293 16.938 23.2432 16.8671 23.2432H10.7074C10.569 23.2432 10.4317 23.2156 10.3045 23.1616C10.1773 23.1075 10.0626 23.028 9.96673 22.9273C9.8708 22.8265 9.79561 22.7063 9.74577 22.5725C9.69593 22.4386 9.67284 22.2931 9.67802 22.1469V12.8153H8.0131C8.0131 12.6768 8.0407 12.5396 8.09474 12.4124C8.14878 12.2852 8.22829 12.1705 8.32903 12.0746C8.42977 11.9787 8.54997 11.9035 8.68383 11.8536C8.81769 11.8038 8.96317 11.7807 9.10938 11.7859H10.9419C11.6851 10.188 12.391 8.00569 13.5842 6.75063C13.8806 6.42349 14.2597 6.24027 14.65 6.21986C15.0403 6.19945 15.4314 6.34393 15.7481 6.62702C16.0648 6.91011 16.2882 7.3189 16.3789 7.77865V11.7859H25.2419C25.3804 11.7859 25.5177 11.8135 25.6449 11.8675C25.7721 11.9216 25.8868 12.0011 25.9827 12.1018C26.0786 12.2026 26.1538 12.3228 26.2036 12.4566C26.2535 12.5905 26.2766 12.736 26.2714 12.8822L24.4246 23.1404C24.3832 23.367 24.2625 23.5648 24.0889 23.7058C23.9153 23.8468 23.6995 23.9225 23.475 23.9187H24.9551V23.0778Z" fill="currentColor"></path></svg></div><div class="full-review__like-counter"></div></div></div></div><div class="card__title"></div></div>');
-    var style = '<style>.cub-collection-card__head{display:-webkit-box;display:-webkit-flex;display:-moz-box;display:-ms-flexbox;display:flex;-webkit-box-align:center;-webkit-align-items:center;-moz-box-align:center;-ms-flex-align:center;align-items:center;-webkit-box-pack:justify;-webkit-justify-content:space-between;-moz-box-pack:justify;-ms-flex-pack:justify;justify-content:space-between;padding:.5em 1em;color:#fff;font-size:1em;font-weight:500;position:absolute;top:0;left:0;width:100%}.cub-collection-card__bottom{display:-webkit-box;display:-webkit-flex;display:-moz-box;display:-ms-flexbox;display:flex;-webkit-box-align:center;-webkit-align-items:center;-moz-box-align:center;-ms-flex-align:center;align-items:center;padding:.5em 1em;background-color:rgba(0,0,0,0.5);color:#fff;font-size:1em;font-weight:400;-webkit-border-radius:1em;-moz-border-radius:1em;border-radius:1em;position:absolute;bottom:0;left:0;width:100%}.cub-collection-card__liked{padding-left:1em;display:-webkit-box;display:-webkit-flex;display:-moz-box;display:-ms-flexbox;display:flex;-webkit-box-align:center;-webkit-align-items:center;-moz-box-align:center;-ms-flex-align:center;align-items:center}.cub-collection-card__liked .full-review__like-icon{margin-top:-0.2em}.cub-collection-card__liked .full-review__like-counter{font-weight:600}.cub-collection-card__items{background:rgba(0,0,0,0.5);padding:.3em;-webkit-border-radius:.2em;-moz-border-radius:.2em;border-radius:.2em}.cub-collection-card__user{display:-webkit-box;display:-webkit-flex;display:-moz-box;display:-ms-flexbox;display:flex;-webkit-box-align:center;-webkit-align-items:center;-moz-box-align:center;-ms-flex-align:center;align-items:center}.cub-collection-card__user-name{padding:0 1em;margin-left:auto}.cub-collection-card__user-icon{width:2em;height:2em;-webkit-border-radius:100%;-moz-border-radius:100%;border-radius:100%;background-color:#fff;border:.2em solid #fff}.cub-collection-card__user-icon img{width:100%;height:100%;-webkit-border-radius:100%;-moz-border-radius:100%;border-radius:100%;opacity:0}.cub-collection-card__user-icon.loaded img{opacity:1}.category-full .cub-collection-card{padding-bottom:2em}body.glass--style .cub-collection-card .cub-collection-card__head,body.glass--style .cub-collection-card .cub-collection-card__bottom{background-color: rgba(0,0,0,0.2);background-image:-webkit-gradient(linear,left top,left bottom,from(rgba(0,0,0,0.3)),to(rgba(0,0,0,0.1)));background-image:-webkit-linear-gradient(top,rgba(0,0,0,0.3),rgba(0,0,0,0.1));background-image:-moz-linear-gradient(top,rgba(0,0,0,0.3),rgba(0,0,0,0.1));background-image:-o-linear-gradient(top,rgba(0,0,0,0.3),rgba(0,0,0,0.1));background-image:linear-gradient(180deg,rgba(0,0,0,0.3),rgba(0,0,0,0.1))}.full--opened .cub-collection-card .card__view:after{display:none}.cub-collection-card img{-o-object-fit:cover;object-fit:cover}</style>';
+    var style = '<style>.cub-collection-card__head{display:-webkit-box;display:-webkit-flex;display:-moz-box;display:-ms-flexbox;display:flex;-webkit-box-align:center;-webkit-align-items:center;-moz-box-align:center;-ms-flex-align:center;align-items:center;-webkit-box-pack:justify;-webkit-justify-content:space-between;-moz-box-pack:justify;-ms-flex-pack:justify;justify-content:space-between;padding:.5em 1em;color:#fff;font-size:1em;font-weight:500;position:absolute;top:0;left:0;width:100%}.cub-collection-card__bottom{display:-webkit-box;display:-webkit-flex;display:-moz-box;display:-ms-flexbox;display:flex;-webkit-box-align:center;-webkit-align-items:center;-moz-box-align:center;-ms-flex-align:center;align-items:center;padding:.5em 1em;background-color:rgba(0,0,0,0.5);color:#fff;font-size:1em;font-weight:400;-webkit-border-radius:1em;-moz-border-radius:1em;border-radius:1em;position:absolute;bottom:0;left:0;width:100%}.cub-collection-card__liked{padding-left:1em;display:-webkit-box;display:-webkit-flex;display:-moz-box;display:-ms-flexbox;display:flex;-webkit-box-align:center;-webkit-align-items:center;-moz-box-align:center;-ms-flex-align:center;align-items:center}.cub-collection-card__liked .full-review__like-icon{margin-top:-0.2em}.cub-collection-card__liked .full-review__like-counter{font-weight:600}.cub-collection-card__items{background:rgba(0,0,0,0.5);padding:.3em;-webkit-border-radius:.2em;-moz-border-radius:.2em;border-radius:.2em}.cub-collection-card__user{display:-webkit-box;display:-webkit-flex;display:-moz-box;display:-ms-flexbox;display:flex;-webkit-box-align:center;-webkit-align-items:center;-moz-box-align:center;-ms-flex-align:center;align-items:center}.cub-collection-card__user-name{padding:0 1em;margin-left:auto}.cub-collection-card__user-icon{width:2em;height:2em;-webkit-border-radius:100%;-moz-border-radius:100%;border-radius:100%;background-color:#fff;border:.2em solid #fff}.cub-collection-card__user-icon img{width:100%;height:100%;-webkit-border-radius:100%;-moz-border-radius:100%;border-radius:100%;opacity:0}.cub-collection-card__user-icon.loaded img{opacity:1}.category-full .cub-collection-card{padding-bottom:2em}body.glass--style .cub-collection-card .cub-collection-card__head,body.glass--style .cub-collection-card .cub-collection-card__bottom{background-color: rgba(0,0,0,0.2);background-image:-webkit-gradient(linear,left top,left bottom,from(rgba(0,0,0,0.3)),to(rgba(0,0,0,0.1)));background-image:-webkit-linear-gradient(top,rgba(0,0,0,0.3),rgba(0,0,0,0.1));background-image:-moz-linear-gradient(top,rgba(0,0,0,0.3),rgba(0,0,0,0.1));background-image:-o-linear-gradient(top,rgba(0,0,0,0.3),rgba(0,0,0,0.1));background-image:-o-linear-gradient(top,rgba(0,0,0,0.3),rgba(0,0,0,0.1));background-image:linear-gradient(180deg,rgba(0,0,0,0.3),rgba(0,0,0,0.1))}.full--opened .cub-collection-card .card__view:after{display:none}.cub-collection-card img{-o-object-fit:cover;object-fit:cover}</style>';
+    style = style.replace('</style>', '.cub-collection-create__center{width:100%;height:100%;display:flex;align-items:center;justify-content:center;background:rgba(255,255,255,0.1);border-radius:0.5em}.cub-collection-card--create .card__img{display:none}</style>');
     Lampa.Template.add('cub_collections_css', style);
     $('body').append(Lampa.Template.get('cub_collections_css', {}, true));
 
@@ -845,37 +927,27 @@
       });
     }
 
-    Lampa.Listener.follow('card', function (e) {
-      if (e.object && e.object.onMenuShow) {
-        var original = e.object.onMenuShow;
-        e.object.onMenuShow = function (menu_items, card, element) {
-          if (original) original(menu_items, card, element);
-          menu_items.unshift({
-            title: 'В коллекцию',
-            onSelect: function () {
-              openAddToCollectionDialog(element);
-            }
-          });
-          menu_items.unshift({
-            title: Lampa.Lang.translate('more'),
-            separator: true
-          });
-        };
-      }
-    });
-
     Lampa.Listener.follow('full', function (e) {
-      if (e.type === 'ready') {
-        var $buttons = $('.full-start-new__buttons');
-        if ($buttons.length && e.activity && e.activity.data && e.activity.data.card) {
-          var card_data = e.activity.data.card;
-          var $btn = $('<div class="simple-button selector"><div class="simple-button__icon"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M19 11H13V5C13 4.44772 12.5523 4 12 4C11.4477 4 11 4.44772 11 5V11H5C4.44772 11 4 11.4477 4 12C4 12.5523 4.44772 13 5 13H11V19C11 19.5523 11.4477 20 12 20C12.5523 20 13 19.5523 13 19V13H19C19.5523 13 20 12.5523 20 12C20 11.4477 19.5523 11 19 11Z" fill="currentColor"></path></svg></div><div class="simple-button__text">В коллекцию</div></div>');
-          $btn.on('hover:enter', function () {
-            openAddToCollectionDialog(card_data);
-          });
-          $buttons.append($btn);
-        }
-      }
+      if (e.type !== 'complite') return;
+      if (!e.object || !e.object.activity) return;
+      if (!e.object.activity.data || !e.object.activity.data.card) return;
+
+      var card_data = e.object.activity.data.card;
+      var render = e.object.activity.render();
+      if (!render || !render.find) return;
+
+      var buttons = render.find('.full-start-new__buttons');
+      if (!buttons || !buttons.length) return;
+      if (buttons.find('.button--collections').length) return;
+
+      var btn = $('<div class="full-start__button selector button--collections"><svg><use xlink:href="#sprite-bookmark"></use></svg><span>В коллекцию</span></div>');
+      btn.on('hover:enter', function () {
+        openAddToCollectionDialog(card_data);
+      });
+
+      var options = buttons.find('.button--options');
+      if (options.length) options.before(btn);
+      else buttons.append(btn);
     });
   }
 
