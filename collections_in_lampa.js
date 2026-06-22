@@ -230,26 +230,6 @@
       };
     }
 
-    function tryEndpoints(endpoints, params, oncomplite, onerror) {
-      var index = 0;
-
-      function next(last) {
-        if (index >= endpoints.length) return onerror(last);
-        var url = api_url + endpoints[index++];
-        network.silent(url, function (data) {
-          if (data && (data.secuses || data.success || data.result || data.id)) return oncomplite(data);
-          next(data);
-        }, function (a, e) {
-          next({
-            a: a,
-            e: e
-          });
-        }, params, header());
-      }
-
-      next();
-    }
-
     function main(params, oncomplite, onerror) {
       var user = Lampa.Storage.get('account', '{}');
       var status = new Lampa.Status(collections.length);
@@ -342,19 +322,39 @@
     }
 
     function createCollection(params, callaback, onerror) {
-      tryEndpoints(['create', 'add', 'new', 'create-collection', 'collection-create', 'create_collection'], params, callaback, onerror);
+      network.silent(api_url + 'create', callaback, function (a, e) {
+        if (onerror) onerror({
+          a: a,
+          e: e
+        });
+      }, params, header());
     }
 
     function editCollection(params, callaback, onerror) {
-      tryEndpoints(['edit', 'update', 'change', 'modify', 'set', 'update-collection', 'collection-update', 'edit_collection'], params, callaback, onerror);
+      network.silent(api_url + 'change', callaback, function (a, e) {
+        if (onerror) onerror({
+          a: a,
+          e: e
+        });
+      }, params, header());
     }
 
     function deleteCollection(params, callaback, onerror) {
-      tryEndpoints(['delete', 'remove', 'del', 'trash', 'delete-collection', 'collection-delete', 'remove_collection'], params, callaback, onerror);
+      network.silent(api_url + 'remove', callaback, function (a, e) {
+        if (onerror) onerror({
+          a: a,
+          e: e
+        });
+      }, params, header());
     }
 
     function coverCollection(params, callaback, onerror) {
-      tryEndpoints(['cover', 'set-cover', 'backdrop', 'set-backdrop', 'poster', 'set-image', 'cover-set'], params, callaback, onerror);
+      network.silent(api_url + 'background', callaback, function (a, e) {
+        if (onerror) onerror({
+          a: a,
+          e: e
+        });
+      }, params, header());
     }
 
     function clear() {
@@ -375,6 +375,16 @@
       coverCollection: coverCollection
     };
 
+    function addFab(parent, onEnter) {
+      if (!parent || !parent.append) return;
+      if (parent.find && parent.find('.cub-collections-in-lampa__fab').length) return;
+      var btn = $("<div class=\"cub-collections-in-lampa__fab selector\"><svg width=\"34\" height=\"34\" viewBox=\"0 0 24 24\" fill=\"none\" xmlns=\"http://www.w3.org/2000/svg\"><path d=\"M12 5v14M5 12h14\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\"/></svg></div>");
+      btn.on('hover:enter', function () {
+        if (onEnter) onEnter();
+      });
+      parent.append(btn);
+    }
+
     function openCreateDialog(onDone) {
       var user = Lampa.Storage.get('account', '{}');
       if (!user.token) return Lampa.Noty.show('Нужно войти в аккаунт CUB');
@@ -386,39 +396,23 @@
         value: ''
       }, function (title) {
         if (!title) return Lampa.Controller.toggle('content');
-        Lampa.Select.show({
-          title: 'Тип коллекции',
-          items: [{
-            title: 'Публичная',
-            public: 1
-          }, {
-            title: 'Приватная',
-            public: 0
-          }],
-          onSelect: function onSelect(item) {
-            Lampa.Controller.toggle('content');
-            Lampa.Loading.start(function () {
-              Api.clear();
-              Lampa.Loading.stop();
-            });
-            Api.createCollection({
-              title: title,
-              public: item.public
-            }, function () {
-              Lampa.Loading.stop();
-              Lampa.Bell.push({
-                text: 'Коллекция создана'
-              });
-              if (onDone) onDone();
-            }, function (err) {
-              Lampa.Loading.stop();
-              Lampa.Noty.show('Не удалось создать коллекцию');
-              if (err && err.a && err.e) Lampa.Noty.show(network.errorDecode(err.a, err.e));
-            });
-          },
-          onBack: function onBack() {
-            Lampa.Controller.toggle('content');
-          }
+        Lampa.Controller.toggle('content');
+        Lampa.Loading.start(function () {
+          Api.clear();
+          Lampa.Loading.stop();
+        });
+        Api.createCollection({
+          name: title
+        }, function (res) {
+          Lampa.Loading.stop();
+          Lampa.Bell.push({
+            text: 'Коллекция создана'
+          });
+          if (onDone) onDone(res && res.collection ? res.collection : null);
+        }, function (err) {
+          Lampa.Loading.stop();
+          Lampa.Noty.show('Не удалось создать коллекцию');
+          if (err && err.a && err.e) Lampa.Noty.show(network.errorDecode(err.a, err.e));
         });
       });
     }
@@ -552,21 +546,10 @@
               Lampa.Bell.push({
                 text: 'Обложка обновлена'
               });
-            }, function () {
-              Api.editCollection(payload, function () {
-                Lampa.Loading.stop();
-                data.backdrop_path = item.backdrop_path;
-                if (card && card.img) {
-                  card.img.src = Lampa.Api.img(item.backdrop_path, 'w500');
-                }
-                Lampa.Bell.push({
-                  text: 'Обложка обновлена'
-                });
-              }, function (err) {
-                Lampa.Loading.stop();
-                Lampa.Noty.show('Не удалось обновить обложку');
-                if (err && err.a && err.e) Lampa.Noty.show(network.errorDecode(err.a, err.e));
-              });
+            }, function (err) {
+              Lampa.Loading.stop();
+              Lampa.Noty.show('Не удалось обновить обложку');
+              if (err && err.a && err.e) Lampa.Noty.show(network.errorDecode(err.a, err.e));
             });
           },
           onBack: function onBack() {
@@ -589,6 +572,27 @@
         Api.main(object, function (data) {
           _this.build(data);
         }, this.empty.bind(this));
+        addFab(this.render(), function () {
+          openCreateDialog(function (created) {
+            var user = Lampa.Storage.get('account', '{}');
+            if (created && created.id) {
+              Lampa.Activity.push({
+                url: created.id,
+                collection: created,
+                title: Lampa.Utils.capitalizeFirstLetter(created.title || created.name || ''),
+                component: 'cub_collections_in_lampa_view',
+                page: 1
+              });
+            } else if (user && user.id) {
+              Lampa.Activity.push({
+                url: 'user_' + user.id,
+                title: 'Мои коллекции',
+                component: 'cub_collections_in_lampa_collection',
+                page: 1
+              });
+            }
+          });
+        });
         return this.render();
       };
 
@@ -625,9 +629,23 @@
 
     function component(object) {
       var comp = new Lampa.InteractionCategory(object);
+      var user = Lampa.Storage.get('account', '{}');
+      var is_own = user && user.id && (object.url + '').indexOf('user_') === 0 && (object.url + '').split('_').pop() == user.id;
 
       comp.create = function () {
         Api.collection(object, this.build.bind(this), this.empty.bind(this));
+        if (is_own) {
+          addFab(this.render(), function () {
+            openCreateDialog(function () {
+              Lampa.Activity.replace({
+                url: object.url,
+                title: object.title,
+                component: 'cub_collections_in_lampa_collection',
+                page: 1
+              });
+            });
+          });
+        }
       };
 
       comp.nextPageReuest = function (object, resolve, reject) {
@@ -663,7 +681,7 @@
       Lampa.Component.add('cub_collections_in_lampa_collection', component);
       Lampa.Component.add('cub_collections_in_lampa_view', component$1);
       Lampa.Template.add('cub_collection', "<div class=\"card cub-collection-card selector layer--visible layer--render card--collection\">\n        <div class=\"card__view\">\n            <img src=\"./img/img_load.svg\" class=\"card__img\">\n            <div class=\"cub-collection-card__head\">\n                <div class=\"cub-collection-card__items\"></div>\n                <div class=\"cub-collection-card__date\"></div>\n            </div>\n            <div class=\"cub-collection-card__bottom\">\n                <div class=\"cub-collection-card__views\"></div>\n                <div class=\"cub-collection-card__liked\">\n                    <div class=\"full-review__like-icon\">\n                        <svg width=\"29\" height=\"27\" viewBox=\"0 0 29 27\" fill=\"none\" xmlns=\"http://www.w3.org/2000/svg\">\n                            <path fill-rule=\"evenodd\" clip-rule=\"evenodd\" d=\"M8.0131 9.05733H3.75799C2.76183 9.05903 1.80696 9.45551 1.10257 10.1599C0.39818 10.8643 0.00170332 11.8192 0 12.8153V23.0778C0.00170332 24.074 0.39818 25.0289 1.10257 25.7333C1.80696 26.4377 2.76183 26.8341 3.75799 26.8358H23.394C24.2758 26.8354 25.1294 26.5252 25.8056 25.9594C26.4819 25.3936 26.9379 24.6082 27.094 23.7403L28.9408 13.4821C29.038 12.9408 29.0153 12.3849 28.8743 11.8534C28.7333 11.3218 28.4774 10.8277 28.1247 10.4058C27.7721 9.98391 27.3311 9.6445 26.833 9.41151C26.3349 9.17852 25.7918 9.05762 25.2419 9.05733H18.5043V3.63509C18.5044 2.90115 18.2824 2.18438 17.8673 1.57908C17.4522 0.973783 16.8636 0.508329 16.179 0.243966C15.4943 -0.0203976 14.7456 -0.0712821 14.0315 0.0980078C13.3173 0.267298 12.6712 0.648829 12.178 1.1924L12.1737 1.19669C10.5632 2.98979 9.70849 5.78681 8.79584 7.79142C8.6423 8.14964 8.45537 8.49259 8.23751 8.81574C8.16898 8.90222 8.09358 8.98301 8.01203 9.05733H8.0131ZM6.54963 23.6147H3.75799C3.68706 23.6147 3.61686 23.6005 3.55156 23.5728C3.48626 23.5452 3.42719 23.5046 3.37789 23.4536C3.32786 23.4047 3.28819 23.3463 3.26126 23.2817C3.23433 23.2171 3.22065 23.1478 3.22098 23.0778V12.8153C3.22098 12.7456 3.23468 12.6767 3.26131 12.6123C3.28793 12.5479 3.32695 12.4894 3.37575 12.4402C3.42472 12.3902 3.48307 12.3505 3.54767 12.3236C3.61227 12.2967 3.68156 12.283 3.75156 12.2833H6.54963V23.6147ZM25.2451 23.6147H9.76977V11.7493C10.4118 11.2783 10.932 10.661 11.2872 9.94823C12.1022 8.16002 12.838 5.71062 14.5078 3.81051C14.5804 3.73544 14.6753 3.68549 14.7783 3.6681C14.8812 3.65071 14.9869 3.66679 15.0804 3.71404C15.1739 3.76128 15.2503 3.83728 15.2982 3.93043C15.346 4.02357 15.363 4.12918 15.3466 4.23251V10.6689C15.3466 11.0936 15.5153 11.5009 15.8155 11.8012C16.1158 12.1015 16.5231 12.2701 16.9478 12.2701H25.2419C25.479 12.2702 25.7132 12.3224 25.9277 12.423C26.1422 12.5237 26.3319 12.6704 26.4833 12.8529C26.6352 13.0345 26.7454 13.2476 26.8061 13.4768C26.8668 13.7061 26.8766 13.9458 26.8349 14.1793L24.9881 24.4375C24.9612 24.5894 24.8814 24.7269 24.7628 24.8256C24.6443 24.9243 24.4947 24.9778 24.3404 24.9767H24.3393\" fill=\"currentColor\"/>\n                        </svg>\n                    </div>\n                    <div class=\"full-review__like-counter\"></div>\n                </div>\n                <div class=\"cub-collection-card__user-name\"></div>\n                <div class=\"cub-collection-card__user-icon\"><img src=\"./img/img_load.svg\"></div>\n            </div>\n            <div class=\"card__overlay\">\n                <div class=\"card__title\"></div>\n            </div>\n        </div>\n    </div>");
-      var style = "\n        <style>\n        .cub-collection-card__head{display:-webkit-box;display:-webkit-flex;display:-moz-box;display:-ms-flexbox;display:flex;-webkit-box-align:center;-webkit-align-items:center;-moz-box-align:center;-ms-flex-align:center;align-items:center;-webkit-box-pack:justify;-webkit-justify-content:space-between;-moz-box-pack:justify;-ms-flex-pack:justify;justify-content:space-between;padding:.5em 1em;color:#fff;font-size:1em;font-weight:500;position:absolute;top:0;left:0;width:100%}.cub-collection-card__bottom{display:-webkit-box;display:-webkit-flex;display:-moz-box;display:-ms-flexbox;display:flex;-webkit-box-align:center;-webkit-align-items:center;-moz-box-align:center;-ms-flex-align:center;align-items:center;padding:.5em 1em;background-color:rgba(0,0,0,0.5);color:#fff;font-size:1em;font-weight:400;-webkit-border-radius:1em;-moz-border-radius:1em;border-radius:1em;position:absolute;bottom:0;left:0;width:100%}.cub-collection-card__liked{padding-left:1em;display:-webkit-box;display:-webkit-flex;display:-moz-box;display:-ms-flexbox;display:flex;-webkit-box-align:center;-webkit-align-items:center;-moz-box-align:center;-ms-flex-align:center;align-items:center}.cub-collection-card__liked .full-review__like-icon{margin-top:-0.2em}.cub-collection-card__liked .full-review__like-counter{font-weight:600}.cub-collection-card__items{background:rgba(0,0,0,0.5);padding:.3em;-webkit-border-radius:.2em;-moz-border-radius:.2em;border-radius:.2em}.cub-collection-card__user-name{padding:0 1em;margin-left:auto}.cub-collection-card__user-icon{width:2em;height:2em;-webkit-border-radius:100%;-moz-border-radius:100%;border-radius:100%;background-color:#fff;border:.2em solid #fff}.cub-collection-card__user-icon img{width:100%;height:100%;-webkit-border-radius:100%;-moz-border-radius:100%;border-radius:100%;opacity:0}.cub-collection-card__user-icon.loaded img{opacity:1}.category-full .cub-collection-card{padding-bottom:2em}body.glass--style .cub-collection-card .cub-collection-card__bottom{background-color:rgba(0,0,0,0.3)}body.glass--style .cub-collection-card .cub-collection-card__head{background-color:rgba(0,0,0,0.3)}\n        </style>\n        ";
+      var style = "\n        <style>\n        .cub-collection-card__head{display:-webkit-box;display:-webkit-flex;display:-moz-box;display:-ms-flexbox;display:flex;-webkit-box-align:center;-webkit-align-items:center;-moz-box-align:center;-ms-flex-align:center;align-items:center;-webkit-box-pack:justify;-webkit-justify-content:space-between;-moz-box-pack:justify;-ms-flex-pack:justify;justify-content:space-between;padding:.5em 1em;color:#fff;font-size:1em;font-weight:500;position:absolute;top:0;left:0;width:100%}.cub-collection-card__bottom{display:-webkit-box;display:-webkit-flex;display:-moz-box;display:-ms-flexbox;display:flex;-webkit-box-align:center;-webkit-align-items:center;-moz-box-align:center;-ms-flex-align:center;align-items:center;padding:.5em 1em;background-color:rgba(0,0,0,0.5);color:#fff;font-size:1em;font-weight:400;-webkit-border-radius:1em;-moz-border-radius:1em;border-radius:1em;position:absolute;bottom:0;left:0;width:100%}.cub-collection-card__liked{padding-left:1em;display:-webkit-box;display:-webkit-flex;display:-moz-box;display:-ms-flexbox;display:flex;-webkit-box-align:center;-webkit-align-items:center;-moz-box-align:center;-ms-flex-align:center;align-items:center}.cub-collection-card__liked .full-review__like-icon{margin-top:-0.2em}.cub-collection-card__liked .full-review__like-counter{font-weight:600}.cub-collection-card__items{background:rgba(0,0,0,0.5);padding:.3em;-webkit-border-radius:.2em;-moz-border-radius:.2em;border-radius:.2em}.cub-collection-card__user-name{padding:0 1em;margin-left:auto}.cub-collection-card__user-icon{width:2em;height:2em;-webkit-border-radius:100%;-moz-border-radius:100%;border-radius:100%;background-color:#fff;border:.2em solid #fff}.cub-collection-card__user-icon img{width:100%;height:100%;-webkit-border-radius:100%;-moz-border-radius:100%;border-radius:100%;opacity:0}.cub-collection-card__user-icon.loaded img{opacity:1}.category-full .cub-collection-card{padding-bottom:2em}body.glass--style .cub-collection-card .cub-collection-card__bottom{background-color:rgba(0,0,0,0.3)}body.glass--style .cub-collection-card .cub-collection-card__head{background-color:rgba(0,0,0,0.3)}.cub-collections-in-lampa__fab{position:fixed;right:1.3em;bottom:5.5em;width:3.2em;height:3.2em;display:-webkit-box;display:-webkit-flex;display:-moz-box;display:-ms-flexbox;display:flex;-webkit-box-align:center;-webkit-align-items:center;-moz-box-align:center;-ms-flex-align:center;align-items:center;-webkit-box-pack:center;-webkit-justify-content:center;-moz-box-pack:center;-ms-flex-pack:center;justify-content:center;background:rgba(255,255,255,0.12);-webkit-backdrop-filter:blur(8px);backdrop-filter:blur(8px);border:1px solid rgba(255,255,255,0.18);border-radius:1.2em;color:#fff;z-index:9999}.cub-collections-in-lampa__fab.focus{background:rgba(255,255,255,0.2)}\n        </style>\n        ";
       Lampa.Template.add('cub_collections_in_lampa_css', style);
       $('body').append(Lampa.Template.get('cub_collections_in_lampa_css', {}, true));
 
@@ -675,19 +693,6 @@
             title: manifest.name,
             component: 'cub_collections_in_lampa_main',
             page: 1
-          });
-        });
-        button.on('hover:long', function () {
-          openCreateDialog(function () {
-            var user = Lampa.Storage.get('account', '{}');
-            if (user && user.id) {
-              Lampa.Activity.push({
-                url: 'user_' + user.id,
-                title: 'Мои коллекции',
-                component: 'cub_collections_in_lampa_collection',
-                page: 1
-              });
-            }
           });
         });
         $('.menu .menu__list').eq(0).append(button);
@@ -705,4 +710,3 @@
       startPlugin();
     }
 })();
-
