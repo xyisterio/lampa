@@ -18,7 +18,7 @@
 
         var view = this.item.find('.card__view');
         if (view) {
-          view.innerHTML = '<div class="cub-collection-create__center"><svg width="48" height="48" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M12 5v14M5 12h14" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg></div>';
+          view.innerHTML = '<div class="cub-collection-create__center"><svg width="34" height="34" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M12 5v14M5 12h14" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg></div>';
         }
 
         var head = this.item.find('.cub-collection-card__head');
@@ -124,8 +124,8 @@
           Lampa.Loading.stop();
           var items = [];
           var voited = Lampa.Storage.cache('collections_voited', 100, []);
-          var user = Lampa.Storage.get('account', '{}');
-          var is_owner = user && user.id && user.id == data.cid;
+          var user = getAccount();
+          var is_owner = user && getProfileId(user) && getProfileId(user) == data.cid;
           items.push({
             title: 'Коллeкции @' + data.username,
             onSelect: function onSelect() {
@@ -287,19 +287,28 @@
     title: 'Все коллекции'
   }];
 
+  function getAccount() {
+    return Lampa.Storage.get('account', '{}') || {};
+  }
+
+  function getProfileId(account) {
+    if (!account) return '';
+    return account.profile && account.profile.id ? account.profile.id : (account.id || '');
+  }
+
   function header() {
-    var user = Lampa.Storage.get('account', '{}');
+    var user = getAccount();
     if (!user.token) return false;
     return {
       headers: {
         token: user.token,
-        profile: user.id
+        profile: getProfileId(user)
       }
     };
   }
 
   function main(params, oncomplite, onerror) {
-    var user = Lampa.Storage.get('account', '{}');
+    var user = getAccount();
     var status = new Lampa.Status(collections.length);
 
     status.onComplite = function () {
@@ -332,7 +341,7 @@
     collections.forEach(function (item) {
       if (item.hpu == 'user' && !user.token) return status.error();
       var url = api_url + 'list?category=' + item.hpu;
-      if (item.hpu == 'user') url = api_url + 'list?cid=' + user.id;
+      if (item.hpu == 'user') url = api_url + 'list?cid=' + getProfileId(user);
       if (item.hpu == 'saved') url = api_url + 'saved-list';
       network.silent(url, function (data) {
         if (item.hpu == 'user' && user.token) {
@@ -450,7 +459,7 @@
   };
 
   function openCreateDialog(onDone) {
-    var user = Lampa.Storage.get('account', '{}');
+    var user = getAccount();
     if (!user.token) return Lampa.Noty.show('Нужно войти в аккаунт CUB');
     Lampa.Input.edit({
       title: 'Название коллекции',
@@ -482,7 +491,7 @@
   }
 
   function openEditDialog(data, card) {
-    var user = Lampa.Storage.get('account', '{}');
+    var user = getAccount();
     if (!user.token) return Lampa.Noty.show('Нужно войти в аккаунт CUB');
     Lampa.Input.edit({
       title: 'Название коллекции',
@@ -627,7 +636,7 @@
   }
 
   function openAddToCollectionDialog(card_data) {
-    var user = Lampa.Storage.get('account', '{}');
+    var user = getAccount();
     if (!user.token) return Lampa.Noty.show('Нужно войти в аккаунт CUB');
 
     Lampa.Loading.start(function () {
@@ -635,7 +644,7 @@
       Lampa.Loading.stop();
     });
 
-    Api.collection({ url: 'user_' + user.id }, function (data) {
+    Api.collection({ url: 'user_' + getProfileId(user), page: 1 }, function (data) {
       Lampa.Loading.stop();
       var items = (data.results || []).map(function (col) {
         return {
@@ -695,6 +704,30 @@
     });
   }
 
+  function getCardMethod(card_data) {
+    if (!card_data) return 'movie';
+    return card_data.method || card_data.media_type || (card_data.name || card_data.original_name || card_data.first_air_date ? 'tv' : 'movie');
+  }
+
+  function getCardId(card_data) {
+    if (!card_data) return '';
+    return card_data.card_id || card_data.tmdb_id || card_data.id || '';
+  }
+
+  function getCardSource(card_data) {
+    if (!card_data) return 'tmdb';
+    return card_data.source || card_data.card_source || 'tmdb';
+  }
+
+  function isOkResponse(res) {
+    if (!res) return true;
+    if (res.success === false) return false;
+    if (res.result === false) return false;
+    if (res.status === 'error') return false;
+    if (res.error) return false;
+    return true;
+  }
+
   function addCardToCollectionInternal(collection_id, card_data) {
     Lampa.Loading.start(function () {
       Api.clear();
@@ -702,10 +735,13 @@
     });
     Api.addCardToCollection({
       id: collection_id,
-      card_id: card_data.id,
-      source: card_data.source || 'tmdb'
-    }, function () {
+      card_id: getCardId(card_data),
+      source: getCardSource(card_data),
+      type: getCardMethod(card_data),
+      method: getCardMethod(card_data)
+    }, function (res) {
       Lampa.Loading.stop();
+      if (!isOkResponse(res)) return Lampa.Noty.show('Не удалось добавить в коллекцию');
       Lampa.Bell.push({
         text: 'Добавлено в коллекцию'
       });
@@ -723,10 +759,13 @@
     });
     Api.removeCardFromCollection({
       id: collection_id,
-      card_id: card_data.id,
-      source: card_data.source || 'tmdb'
-    }, function () {
+      card_id: getCardId(card_data),
+      source: getCardSource(card_data),
+      type: getCardMethod(card_data),
+      method: getCardMethod(card_data)
+    }, function (res) {
       Lampa.Loading.stop();
+      if (!isOkResponse(res)) return Lampa.Noty.show('Не удалось удалить из коллекции');
       Lampa.Bell.push({
         text: 'Удалено из коллекции'
       });
@@ -783,8 +822,8 @@
     };
 
     comp.cardRender = function (object, element, card) {
-      var user = Lampa.Storage.get('account', '{}');
-      var is_owner = user && user.id && current_collection_data && current_collection_data.cid == user.id;
+      var user = getAccount();
+      var is_owner = user && getProfileId(user) && current_collection_data && current_collection_data.cid == getProfileId(user);
 
       var original_onMenuShow = card.onMenuShow;
       
@@ -812,12 +851,17 @@
       };
 
       card.onEnter = function () {
+        var method = getCardMethod(element);
+        var id = getCardId(element);
+
         Lampa.Activity.push({
-          url: element.id,
+          url: element.url || id,
           title: element.title || element.name,
           component: 'full',
+          id: id,
+          method: method,
           card: element,
-          source: element.source || object.source
+          source: getCardSource(element) || object.source
         });
       };
     };
@@ -827,8 +871,8 @@
 
   function component(object) {
     var comp = new Lampa.InteractionCategory(object);
-    var user = Lampa.Storage.get('account', '{}');
-    var is_own = user && user.id && (object.url + '').indexOf('user') >= 0 && (object.url + '').split('_').pop() == user.id;
+    var user = getAccount();
+    var is_own = user && getProfileId(user) && (object.url + '').indexOf('user') >= 0 && (object.url + '').split('_').pop() == getProfileId(user);
 
     comp.create = function () {
       Api.collection(object, function (data) {
@@ -844,7 +888,7 @@
             liked: 0,
             username: user.username || 'Me',
             icon: '',
-            cid: user.id
+            cid: getProfileId(user)
           });
         }
         comp.build(data);
@@ -867,7 +911,7 @@
             });
           });
         };
-        card.render(true).innerHTML = '<div class="card__view"><div style="width:100%;height:100%;display:flex;align-items:center;justify-content:center;background:rgba(255,255,255,0.1);border-radius:0.5em;"><svg width="48" height="48" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M12 5v14M5 12h14" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg></div></div><div class="card__title">Создать коллекцию</div>';
+        card.render(true).innerHTML = '<div class="card__view"><div style="width:100%;height:100%;display:flex;align-items:center;justify-content:center;background:rgba(255,255,255,0.1);border-radius:0.5em;"><svg width="34" height="34" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M12 5v14M5 12h14" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg></div></div><div class="card__title">Создать коллекцию</div>';
       } else {
         card.onMenu = false;
 
@@ -903,7 +947,7 @@
     Lampa.Component.add('cub_collections_view', component$1);
     Lampa.Template.add('cub_collection', '<div class="card cub-collection-card selector layer--visible layer--render card--collection"><div class="card__view"><img src="./img/img_load.svg" class="card__img"><div class="cub-collection-card__head"><div class="cub-collection-card__items"></div><div class="cub-collection-card__date"></div></div><div class="cub-collection-card__bottom"><div class="cub-collection-card__views"></div><div class="cub-collection-card__user"><div class="cub-collection-card__user-icon"><img src="./img/img_load.svg"></div><div class="cub-collection-card__user-name"></div></div><div class="cub-collection-card__liked"><div class="full-review__like-icon"><svg width="29" height="27" viewBox="0 0 29 27" fill="none" xmlns="http://www.w3.org/2000/svg"><path fill-rule="evenodd" clip-rule="evenodd" d="M8.0131 9.05733H3.75799C2.76183 9.05903 1.80696 9.45551 1.10257 10.1599C0.39818 10.8643 0.00170332 11.8192 0 12.8153V23.0778C0.00170332 24.074 0.39818 25.0289 1.10257 25.7333C1.80696 26.4377 2.76183 26.8341 3.75799 26.8358H23.394C24.2758 26.8354 25.1294 26.5252 25.8056 25.9594C26.4819 25.3936 26.9379 24.6082 27.094 23.7403L28.9408 13.4821C29.038 12.9408 29.0153 12.3849 28.8743 11.8534C28.7333 11.3218 28.4774 10.8277 28.1247 10.4058C27.7721 9.98391 27.3311 9.6445 26.833 9.41151C26.3349 9.17852 25.7918 9.05762 25.2419 9.05733H18.5043V3.63509C18.5044 2.90115 18.2824 2.18438 17.8673 1.57908C17.4522 0.973783 16.8636 0.508329 16.179 0.243966C15.4943 -0.0203976 14.7456 -0.0712821 14.0315 0.0980078C13.3173 0.267298 12.6712 0.648829 12.178 1.1924L12.1737 1.19669C10.5632 2.98979 9.70849 5.78681 8.79584 7.79142C8.6423 8.14964 8.45537 8.49259 8.23751 8.81574C8.16898 8.90222 8.09358 8.98301 8.01203 9.05733H8.0131ZM6.54963 23.6147H3.75799C3.68706 23.6147 3.61686 23.6005 3.55156 23.5728C3.48626 23.5452 3.42719 23.5046 3.37789 23.4536C3.32786 23.4047 3.28819 23.3463 3.26126 23.2817C3.23433 23.217 3.22045 23.1468 3.22045 23.0778V12.8153C3.22045 12.6768 3.24805 12.5396 3.30209 12.4124C3.35613 12.2852 3.43564 12.1705 3.53638 12.0746C3.63712 11.9787 3.75732 11.9035 3.89118 11.8536C4.02504 11.8038 4.17052 11.7807 4.31673 11.7859H6.54963V23.6147ZM24.9551 23.0778C24.9551 23.2163 24.9275 23.3535 24.8735 23.4807C24.8194 23.6079 24.7399 23.7226 24.6392 23.8185C24.5384 23.9144 24.4182 23.9896 24.2844 24.0394C24.1505 24.0893 24.005 24.1124 23.8588 24.1072H9.87479V12.8153H18.5043V18.0188C18.5043 18.1573 18.4767 18.2945 18.4227 18.4217C18.3686 18.5489 18.2891 18.6636 18.1884 18.7595C18.0876 18.8554 17.9674 18.9306 17.8336 18.9805C17.6997 19.0303 17.5542 19.0534 17.408 19.0482V22.7064C17.408 22.7773 17.3938 22.8475 17.3662 22.9128C17.3386 22.9781 17.298 23.0372 17.247 23.0865C17.196 23.1358 17.1376 23.1755 17.0729 23.2024C17.0082 23.2293 16.938 23.2432 16.8671 23.2432H10.7074C10.569 23.2432 10.4317 23.2156 10.3045 23.1616C10.1773 23.1075 10.0626 23.028 9.96673 22.9273C9.8708 22.8265 9.79561 22.7063 9.74577 22.5725C9.69593 22.4386 9.67284 22.2931 9.67802 22.1469V12.8153H8.0131C8.0131 12.6768 8.0407 12.5396 8.09474 12.4124C8.14878 12.2852 8.22829 12.1705 8.32903 12.0746C8.42977 11.9787 8.54997 11.9035 8.68383 11.8536C8.81769 11.8038 8.96317 11.7807 9.10938 11.7859H10.9419C11.6851 10.188 12.391 8.00569 13.5842 6.75063C13.8806 6.42349 14.2597 6.24027 14.65 6.21986C15.0403 6.19945 15.4314 6.34393 15.7481 6.62702C16.0648 6.91011 16.2882 7.3189 16.3789 7.77865V11.7859H25.2419C25.3804 11.7859 25.5177 11.8135 25.6449 11.8675C25.7721 11.9216 25.8868 12.0011 25.9827 12.1018C26.0786 12.2026 26.1538 12.3228 26.2036 12.4566C26.2535 12.5905 26.2766 12.736 26.2714 12.8822L24.4246 23.1404C24.3832 23.367 24.2625 23.5648 24.0889 23.7058C23.9153 23.8468 23.6995 23.9225 23.475 23.9187H24.9551V23.0778Z" fill="currentColor"></path></svg></div><div class="full-review__like-counter"></div></div></div></div><div class="card__title"></div></div>');
     var style = '<style>.cub-collection-card__head{display:-webkit-box;display:-webkit-flex;display:-moz-box;display:-ms-flexbox;display:flex;-webkit-box-align:center;-webkit-align-items:center;-moz-box-align:center;-ms-flex-align:center;align-items:center;-webkit-box-pack:justify;-webkit-justify-content:space-between;-moz-box-pack:justify;-ms-flex-pack:justify;justify-content:space-between;padding:.5em 1em;color:#fff;font-size:1em;font-weight:500;position:absolute;top:0;left:0;width:100%}.cub-collection-card__bottom{display:-webkit-box;display:-webkit-flex;display:-moz-box;display:-ms-flexbox;display:flex;-webkit-box-align:center;-webkit-align-items:center;-moz-box-align:center;-ms-flex-align:center;align-items:center;padding:.5em 1em;background-color:rgba(0,0,0,0.5);color:#fff;font-size:1em;font-weight:400;-webkit-border-radius:1em;-moz-border-radius:1em;border-radius:1em;position:absolute;bottom:0;left:0;width:100%}.cub-collection-card__liked{padding-left:1em;display:-webkit-box;display:-webkit-flex;display:-moz-box;display:-ms-flexbox;display:flex;-webkit-box-align:center;-webkit-align-items:center;-moz-box-align:center;-ms-flex-align:center;align-items:center}.cub-collection-card__liked .full-review__like-icon{margin-top:-0.2em}.cub-collection-card__liked .full-review__like-counter{font-weight:600}.cub-collection-card__items{background:rgba(0,0,0,0.5);padding:.3em;-webkit-border-radius:.2em;-moz-border-radius:.2em;border-radius:.2em}.cub-collection-card__user{display:-webkit-box;display:-webkit-flex;display:-moz-box;display:-ms-flexbox;display:flex;-webkit-box-align:center;-webkit-align-items:center;-moz-box-align:center;-ms-flex-align:center;align-items:center}.cub-collection-card__user-name{padding:0 1em;margin-left:auto}.cub-collection-card__user-icon{width:2em;height:2em;-webkit-border-radius:100%;-moz-border-radius:100%;border-radius:100%;background-color:#fff;border:.2em solid #fff}.cub-collection-card__user-icon img{width:100%;height:100%;-webkit-border-radius:100%;-moz-border-radius:100%;border-radius:100%;opacity:0}.cub-collection-card__user-icon.loaded img{opacity:1}.category-full .cub-collection-card{padding-bottom:2em}body.glass--style .cub-collection-card .cub-collection-card__head,body.glass--style .cub-collection-card .cub-collection-card__bottom{background-color: rgba(0,0,0,0.2);background-image:-webkit-gradient(linear,left top,left bottom,from(rgba(0,0,0,0.3)),to(rgba(0,0,0,0.1)));background-image:-webkit-linear-gradient(top,rgba(0,0,0,0.3),rgba(0,0,0,0.1));background-image:-moz-linear-gradient(top,rgba(0,0,0,0.3),rgba(0,0,0,0.1));background-image:-o-linear-gradient(top,rgba(0,0,0,0.3),rgba(0,0,0,0.1));background-image:-o-linear-gradient(top,rgba(0,0,0,0.3),rgba(0,0,0,0.1));background-image:linear-gradient(180deg,rgba(0,0,0,0.3),rgba(0,0,0,0.1))}.full--opened .cub-collection-card .card__view:after{display:none}.cub-collection-card img{-o-object-fit:cover;object-fit:cover}</style>';
-    style = style.replace('</style>', '.cub-collection-create__center{width:100%;height:100%;display:flex;align-items:center;justify-content:center;background:rgba(255,255,255,0.1);border-radius:0.5em}.cub-collection-card--create .card__img{display:none}</style>');
+    style = style.replace('</style>', '.cub-collection-create__center{width:100%;height:100%;display:flex;align-items:center;justify-content:center;background:rgba(255,255,255,0.1);border-radius:0.5em}.cub-collection-create__center svg{width:34px;height:34px}.cub-collection-card--create .card__img{display:none}</style>');
     Lampa.Template.add('cub_collections_css', style);
     $('body').append(Lampa.Template.get('cub_collections_css', {}, true));
 
@@ -930,17 +974,19 @@
     Lampa.Listener.follow('full', function (e) {
       if (e.type !== 'complite') return;
       if (!e.object || !e.object.activity) return;
-      if (!e.object.activity.data || !e.object.activity.data.card) return;
 
-      var card_data = e.object.activity.data.card;
+      var card_data = e.data && e.data.movie ? e.data.movie : (e.object.card || null);
+      if (!card_data) return;
       var render = e.object.activity.render();
       if (!render || !render.find) return;
 
       var buttons = render.find('.full-start-new__buttons');
+      if (!buttons || !buttons.length) buttons = render.find('.full-start__buttons');
       if (!buttons || !buttons.length) return;
       if (buttons.find('.button--collections').length) return;
 
-      var btn = $('<div class="full-start__button selector button--collections"><svg><use xlink:href="#sprite-bookmark"></use></svg><span>В коллекцию</span></div>');
+      var icon = '<svg width="21" height="32" viewBox="0 0 21 32" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M2 1.5H19C19.2761 1.5 19.5 1.72386 19.5 2V27.9618C19.5 28.3756 19.0261 28.6103 18.697 28.3595L12.6212 23.7303C11.3682 22.7757 9.63183 22.7757 8.37885 23.7303L2.30302 28.3595C1.9739 28.6103 1.5 28.3756 1.5 27.9618V2C1.5 1.72386 1.72386 1.5 2 1.5Z" stroke="currentColor" stroke-width="2.5"/></svg>';
+      var btn = $('<div class="full-start__button selector button--collections">' + icon + '<span>В коллекцию</span></div>');
       btn.on('hover:enter', function () {
         openAddToCollectionDialog(card_data);
       });
