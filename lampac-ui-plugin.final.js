@@ -1492,14 +1492,28 @@
             var resolveType = function(cardEl, data) {
                 if (!data || typeof data !== 'object') return null;
 
-                var isCollectionCard = cardEl.classList.contains('card--collection') || cardEl.classList.contains('cub-collection-card');
+                var isCollectionCard = cardEl.classList.contains('card--collection') || cardEl.classList.contains('cub-collection-card') ||
+                    !!data._collection || (typeof data.items_count !== 'undefined' && typeof data.username !== 'undefined' && typeof data.liked !== 'undefined');
                 if (isCollectionCard) return null;
 
-                var isCoreMediaCard = cardEl.classList.contains('card--movie') || cardEl.classList.contains('card--tv') ||
-                    data.media_type === 'movie' || data.media_type === 'tv' ||
-                    data.type === 'movie' || data.type === 'tv' ||
-                    data.method === 'movie' || data.method === 'tv';
-                if (!isCoreMediaCard) return null;
+                if (data.tv === true && data.url) return null;
+                if (data.logo && data.url && !data.release_date && !data.first_air_date) return null;
+
+                try {
+                    var p = cardEl;
+                    var depth = 0;
+                    while (p && depth < 7) {
+                        if (p.classList) {
+                            for (var c = 0; c < p.classList.length; c++) {
+                                if ((p.classList[c] || '').toLowerCase().indexOf('iptv') !== -1) return null;
+                            }
+                        }
+                        p = p.parentNode;
+                        depth++;
+                    }
+                } catch (e) {}
+
+                if (data.known_for_department || data.profile_path && !data.release_date && !data.first_air_date) return null;
 
                 var hasMovieSignals = !!(data.title || data.original_title || data.release_date);
                 var hasTvSignals = !!(data.name || data.original_name || data.first_air_date || data.seasons);
@@ -1525,11 +1539,27 @@
                 if (cardEl._lampac_badge) return;
                 if (!cardEl.classList.contains('card')) return;
                 if (cardEl.querySelector('.card-parser__title')) return;
-                if (cardEl.classList.contains('card--collection') || cardEl.classList.contains('cub-collection-card')) return;
                 var view = cardEl.querySelector('.card__view');
                 if (!view) return;
+
+                if (!cardEl._lampac_badge_listener && cardEl.addEventListener) {
+                    cardEl._lampac_badge_listener = true;
+                    cardEl.addEventListener('visible', function () {
+                        try { applyBadge(cardEl); } catch (e) {}
+                    });
+                }
                 
-                var data = cardEl.card_data || null;
+                var data = cardEl.card_data || cardEl.data || null;
+                if (!data) {
+                    if (!cardEl._lampac_badge_retry) {
+                        cardEl._lampac_badge_retry = true;
+                        setTimeout(function () {
+                            try { cardEl._lampac_badge_retry = false; } catch (e) {}
+                            try { applyBadge(cardEl); } catch (e) {}
+                        }, 400);
+                    }
+                    return;
+                }
                 var type = resolveType(cardEl, data);
                 if (!type) return;
                 var typeEl = view.querySelector('.card__type');
