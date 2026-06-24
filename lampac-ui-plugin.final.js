@@ -1490,7 +1490,22 @@
             window.lampac_ui_badges_v100 = true;
 
             var resolveType = function(cardEl, data) {
-                var isTV = cardEl.classList.contains('card--tv') || !!(data && data.original_name);
+                if (!data || typeof data !== 'object') return null;
+
+                var isCollectionCard = cardEl.classList.contains('card--collection') || cardEl.classList.contains('cub-collection-card');
+                if (isCollectionCard) return null;
+
+                var isCoreMediaCard = cardEl.classList.contains('card--movie') || cardEl.classList.contains('card--tv') ||
+                    data.media_type === 'movie' || data.media_type === 'tv' ||
+                    data.type === 'movie' || data.type === 'tv' ||
+                    data.method === 'movie' || data.method === 'tv';
+                if (!isCoreMediaCard) return null;
+
+                var hasMovieSignals = !!(data.title || data.original_title || data.release_date);
+                var hasTvSignals = !!(data.name || data.original_name || data.first_air_date || data.seasons);
+                if (!hasMovieSignals && !hasTvSignals) return null;
+
+                var isTV = cardEl.classList.contains('card--tv') || !!(data && (data.original_name || data.first_air_date || data.name));
                 var isAnim = false;
                 if (data) {
                     var ids = data.genre_ids;
@@ -1510,11 +1525,13 @@
                 if (cardEl._lampac_badge) return;
                 if (!cardEl.classList.contains('card')) return;
                 if (cardEl.querySelector('.card-parser__title')) return;
+                if (cardEl.classList.contains('card--collection') || cardEl.classList.contains('cub-collection-card')) return;
                 var view = cardEl.querySelector('.card__view');
                 if (!view) return;
                 
                 var data = cardEl.card_data || null;
                 var type = resolveType(cardEl, data);
+                if (!type) return;
                 var typeEl = view.querySelector('.card__type');
                 if (!typeEl) {
                     typeEl = document.createElement('div');
